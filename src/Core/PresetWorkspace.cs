@@ -179,11 +179,11 @@ namespace ProbablyEdited
             if (legacyActiveJson != null)
             {
                 if (string.IsNullOrWhiteSpace(legacyActiveJson))
-                    throw new FormatException("active.json 已存在但内容为空；请从 previous.json 恢复，而不是覆盖它。");
+                    throw new FormatException(UiText.Get("core.workspace.legacy_empty"));
 
                 var legacyState = new EditorState();
                 legacyState.LoadSaved(legacyActiveJson);
-                PresetRecord initial = new PresetRecord(workspace._selectedPresetId, legacyState, GetDefaultPresetName(1), false);
+                PresetRecord initial = new PresetRecord(workspace._selectedPresetId, legacyState, GetLegacyPresetName(1), false);
                 workspace._presets[0] = initial;
                 workspace._presetsById[initial.Id] = initial;
                 workspace._activeOverrides = ReadOnlySnapshot(legacyState.Overrides);
@@ -208,11 +208,11 @@ namespace ProbablyEdited
         {
             PresetRecord preset = GetPreset(presetId);
             if (name == null)
-                throw new ArgumentNullException(nameof(name), "预设名称不能为空。");
+                throw new ArgumentNullException(nameof(name), UiText.Get("core.preset.name_empty"));
 
             string normalized = name.Trim();
             if (normalized.Length == 0)
-                throw new ArgumentException("预设名称不能为空。", nameof(name));
+                throw new ArgumentException(UiText.Get("core.preset.name_empty"), nameof(name));
 
             preset.Name = normalized;
         }
@@ -220,7 +220,7 @@ namespace ProbablyEdited
         public string CreatePreset()
         {
             if (!CanCreatePreset)
-                throw new InvalidOperationException($"最多只能创建 {MaxPresets} 个预设。");
+                throw new InvalidOperationException(UiText.Format("core.preset.limit_create", MaxPresets));
 
             var state = new EditorState();
             state.SetCatalog(State.Entries);
@@ -237,11 +237,11 @@ namespace ProbablyEdited
             if (_presets.Count == 1)
             {
                 throw new InvalidOperationException(
-                    "至少保留一个预设。当前应用的预设不能删除；请先保存并应用另一个预设后再删除。");
+                    UiText.Get("core.preset.keep_one"));
             }
 
             if (StringComparer.Ordinal.Equals(presetId, _activePresetId))
-                throw new InvalidOperationException("当前应用的预设不能删除；请先保存并应用另一个预设后再删除。");
+                throw new InvalidOperationException(UiText.Get("core.preset.active_delete"));
 
             if (!preset.IsNew)
                 _removedSavedPresetIds.Add(presetId);
@@ -303,7 +303,7 @@ namespace ProbablyEdited
             bool createsPreset = targetPresetId == null;
             PresetRecord existingPreset = createsPreset ? null : GetPreset(targetPresetId);
             if (createsPreset && !CanCreatePreset)
-                throw new InvalidOperationException($"最多只能导入到 {MaxPresets} 个预设。");
+                throw new InvalidOperationException(UiText.Format("core.import.limit_create", MaxPresets));
 
             EditorState.PatchDocument document = EditorState.ParseSharedPatch(json);
             EditorState selectedState = State;
@@ -330,20 +330,20 @@ namespace ProbablyEdited
             var warnings = new List<string>();
 
             if (gameVersion == null)
-                warnings.Add("当前游戏版本未知，无法检查补丁版本兼容性。");
+                warnings.Add(UiText.Get("import.warning.game_unknown"));
             else if (!StringComparer.Ordinal.Equals(document.GameVersion, gameVersion))
-                warnings.Add($"补丁版本 {document.GameVersion} 与当前游戏版本 {gameVersion} 不同；请核对后再应用。");
+                warnings.Add(UiText.Format("import.warning.game_mismatch", document.GameVersion, gameVersion));
 
             string knownLocale = selectedState.CatalogLocale;
             if (knownLocale == null)
-                warnings.Add("尚无已加载的语言目录；不可用项计为 0，未判断任何键是否缺失。");
+                warnings.Add(UiText.Get("import.warning.locale_unknown"));
             else
-                warnings.Add($"不可用项仅按当前已加载的 {knownLocale} 语言目录统计；未加载语言不计入。");
+                warnings.Add(UiText.Format("import.warning.locale_scope", knownLocale));
 
             if (catalogPlan.UnavailableCount > 0)
-                warnings.Add($"当前已加载语言目录中有 {catalogPlan.UnavailableCount} 项暂不可用；这些覆盖仍会保留，不会按缺失项删除。");
+                warnings.Add(UiText.Format("import.warning.unavailable_count", catalogPlan.UnavailableCount));
             if (targetPlan.ConflictCount > 0)
-                warnings.Add($"有 {targetPlan.ConflictCount} 项与目标预设不同；不选择覆盖冲突时将保留目标值。");
+                warnings.Add(UiText.Format("import.warning.conflict", targetPlan.ConflictCount));
 
             return new PresetImportPreview(
                 targetPresetId,
@@ -365,26 +365,26 @@ namespace ProbablyEdited
         public void ConfirmImport(PresetImportPreview preview, bool overwriteConflicts)
         {
             if (preview == null)
-                throw new ArgumentNullException(nameof(preview), "导入预览不能为空；请先预览文件。");
+                throw new ArgumentNullException(nameof(preview), UiText.Get("core.import.preview_null"));
             if (!ReferenceEquals(preview.WorkspaceMarker, _marker))
-                throw new InvalidOperationException("此导入预览不属于当前工作区，请重新预览文件。");
+                throw new InvalidOperationException(UiText.Get("core.import.preview_other_workspace"));
             if (!StringComparer.Ordinal.Equals(_selectedPresetId, preview.SelectedPresetIdMarker) ||
                 !ReferenceEquals(State, preview.SelectedState))
             {
-                throw new InvalidOperationException("预览后当前预设已变化，请重新预览文件。");
+                throw new InvalidOperationException(UiText.Get("core.import.preview_selected_changed"));
             }
 
             preview.SelectedState.ValidateImportPlan(preview.CatalogPlan);
             if (preview.CreatesPreset)
             {
                 if (preview.TargetPresetId != null || !CanCreatePreset)
-                    throw new InvalidOperationException("预览后目标预设已变化或容量已满，请重新预览文件。");
+                    throw new InvalidOperationException(UiText.Get("core.import.preview_target_full"));
             }
             else if (preview.TargetPresetId == null ||
                      !_presetsById.TryGetValue(preview.TargetPresetId, out PresetRecord currentPreset) ||
                      !ReferenceEquals(currentPreset.State, preview.TargetState))
             {
-                throw new InvalidOperationException("预览后目标预设已变化，请重新预览文件。");
+                throw new InvalidOperationException(UiText.Get("core.import.preview_target_changed"));
             }
 
             preview.TargetState.ValidateImportPlan(preview.TargetPlan);
@@ -461,38 +461,38 @@ namespace ProbablyEdited
         private static WorkspaceDocument ParseWorkspace(string json)
         {
             if (string.IsNullOrWhiteSpace(json))
-                throw new FormatException("presets.json 已存在但内容为空；请从 presets.previous.json 恢复，而不是覆盖它。");
+                throw new FormatException(UiText.Get("core.workspace.empty"));
 
-            JToken token = ReadJson(json, "工作区");
+            JToken token = ReadJson(json, UiText.Get("core.context.workspace"));
             if (!(token is JObject root))
-                throw new FormatException("工作区根节点必须是 JSON 对象。");
+                throw new FormatException(UiText.Get("core.workspace.root_object"));
 
-            int version = RequireInt(root["schemaVersion"], "工作区字段 schemaVersion");
+            int version = RequireInt(root["schemaVersion"], UiText.Format("core.workspace.field_context", UiText.Get("core.context.workspace"), "schemaVersion"));
             if (version != LegacyWorkspaceSchemaVersion && version != NamedWorkspaceSchemaVersion && version != WorkspaceSchemaVersion)
-                throw new NotSupportedException($"不支持工作区版本 {version}；当前支持 schemaVersion 1、2 和 {WorkspaceSchemaVersion}。");
+                throw new NotSupportedException(UiText.Format("core.workspace.unsupported_version", version, WorkspaceSchemaVersion));
 
-            RequireExactProperties(root, version == WorkspaceSchemaVersion ? WorkspacePropertiesV3 : WorkspacePropertiesV1V2, "工作区");
-            string schema = RequireString(root, "schema", "工作区", false);
+            RequireExactProperties(root, version == WorkspaceSchemaVersion ? WorkspacePropertiesV3 : WorkspacePropertiesV1V2, UiText.Get("core.context.workspace"));
+            string schema = RequireString(root, "schema", UiText.Get("core.context.workspace"), false);
             if (!StringComparer.Ordinal.Equals(schema, WorkspaceSchema))
-                throw new NotSupportedException($"不支持工作区格式“{schema}”。");
+                throw new NotSupportedException(UiText.Format("core.workspace.unsupported_schema", schema));
 
             bool legacy = version < WorkspaceSchemaVersion;
             int activeSlot = 0;
             string activePresetId = null;
             if (legacy)
             {
-                activeSlot = RequireInt(root["activeSlot"], "工作区字段 activeSlot");
+                activeSlot = RequireInt(root["activeSlot"], UiText.Format("core.workspace.field_context", UiText.Get("core.context.workspace"), "activeSlot"));
                 ValidateLegacySlot(activeSlot);
             }
             else
             {
-                activePresetId = RequireString(root, "activePresetId", "工作区", false);
+                activePresetId = RequireString(root, "activePresetId", UiText.Get("core.context.workspace"), false);
             }
 
             if (!(root["presets"] is JArray presetArray))
-                throw new FormatException("工作区字段 presets 必须是数组。");
+                throw new FormatException(UiText.Get("core.workspace.presets_array"));
             if (presetArray.Count == 0 || presetArray.Count > MaxPresets)
-                throw new FormatException($"工作区必须包含 1–{MaxPresets} 个预设。");
+                throw new FormatException(UiText.Format("core.workspace.preset_count", MaxPresets));
 
             var presets = new List<WorkspacePreset>(presetArray.Count);
             var legacyPresets = legacy ? new SortedDictionary<int, WorkspacePreset>() : null;
@@ -502,41 +502,42 @@ namespace ProbablyEdited
             {
                 index++;
                 if (!(item is JObject presetObject))
-                    throw new FormatException($"工作区 presets 第 {index} 项必须是 JSON 对象。");
+                    throw new FormatException(UiText.Format("core.workspace.preset_object", index));
 
+                string presetContext = UiText.Format("core.workspace.preset_context", index);
                 RequireExactProperties(presetObject,
                     version == LegacyWorkspaceSchemaVersion ? PresetPropertiesV1 :
                     version == NamedWorkspaceSchemaVersion ? PresetPropertiesV2 : PresetPropertiesV3,
-                    $"工作区 presets 第 {index} 项");
+                    presetContext);
 
                 string id;
                 string name;
                 int legacySlot = 0;
                 if (legacy)
                 {
-                    legacySlot = RequireInt(presetObject["slot"], $"工作区 presets 第 {index} 项 slot");
+                    legacySlot = RequireInt(presetObject["slot"], UiText.Format("core.workspace.field_context", presetContext, "slot"));
                     ValidateLegacySlot(legacySlot);
                     id = CreatePresetId();
                     name = version == LegacyWorkspaceSchemaVersion
-                        ? GetDefaultPresetName(legacySlot)
-                        : RequireString(presetObject, "name", $"工作区 presets 第 {index} 项", false);
+                        ? GetLegacyPresetName(legacySlot)
+                        : RequireString(presetObject, "name", presetContext, false);
                 }
                 else
                 {
-                    id = RequireString(presetObject, "id", $"工作区 presets 第 {index} 项", false);
-                    name = RequireString(presetObject, "name", $"工作区 presets 第 {index} 项", false);
+                    id = RequireString(presetObject, "id", presetContext, false);
+                    name = RequireString(presetObject, "name", presetContext, false);
                 }
 
                 if (!presetIds.Add(id))
-                    throw new FormatException($"工作区预设 ID “{id}”重复。");
+                    throw new FormatException(UiText.Format("core.workspace.duplicate_preset_id", id));
 
                 Dictionary<TextId, string> overrides = ParseOverrides(
-                    presetObject["overrides"], $"工作区 presets 第 {index} 项 overrides");
+                    presetObject["overrides"], presetContext + " overrides");
                 var preset = new WorkspacePreset(id, name, overrides);
                 if (legacy)
                 {
                     if (legacyPresets.ContainsKey(legacySlot))
-                        throw new FormatException($"工作区预设序号 {legacySlot} 重复。");
+                        throw new FormatException(UiText.Format("core.workspace.duplicate_legacy_slot", legacySlot));
                     legacyPresets.Add(legacySlot, preset);
                     if (legacySlot == activeSlot)
                         activePresetId = id;
@@ -555,8 +556,8 @@ namespace ProbablyEdited
 
             if (activePresetId == null || !presetIds.Contains(activePresetId))
                 throw new FormatException(legacy
-                    ? "工作区 activeSlot 必须指向一个已存在的预设。"
-                    : "工作区 activePresetId 必须指向一个已存在的预设。");
+                    ? UiText.Get("core.workspace.active_slot_missing")
+                    : UiText.Get("core.workspace.active_id_missing"));
 
             return new WorkspaceDocument(activePresetId, presets, legacy);
         }
@@ -564,7 +565,7 @@ namespace ProbablyEdited
         private static Dictionary<TextId, string> ParseOverrides(JToken token, string context)
         {
             if (!(token is JArray items))
-                throw new FormatException($"{context} 必须是数组。");
+                throw new FormatException(UiText.Format("core.overrides.array", context));
 
             var overrides = new Dictionary<TextId, string>();
             int index = 0;
@@ -572,17 +573,18 @@ namespace ProbablyEdited
             {
                 index++;
                 if (!(item is JObject value))
-                    throw new FormatException($"{context} 第 {index} 项必须是 JSON 对象。");
+                    throw new FormatException(UiText.Format("core.overrides.item_object", context, index));
 
-                RequireExactProperties(value, OverrideProperties, $"{context} 第 {index} 项");
-                string sourceId = RequireString(value, "sourceId", $"{context} 第 {index} 项", false);
-                string locale = RequireString(value, "locale", $"{context} 第 {index} 项", false);
-                string tableId = RequireString(value, "tableId", $"{context} 第 {index} 项", false);
-                string key = RequireString(value, "key", $"{context} 第 {index} 项", false);
-                string text = RequireString(value, "text", $"{context} 第 {index} 项", true);
+                string itemContext = UiText.Format("core.overrides.item_context", context, index);
+                RequireExactProperties(value, OverrideProperties, itemContext);
+                string sourceId = RequireString(value, "sourceId", itemContext, false);
+                string locale = RequireString(value, "locale", itemContext, false);
+                string tableId = RequireString(value, "tableId", itemContext, false);
+                string key = RequireString(value, "key", itemContext, false);
+                string text = RequireString(value, "text", itemContext, true);
                 var id = new TextId(sourceId, locale, tableId, key);
                 if (overrides.ContainsKey(id))
-                    throw new FormatException($"{context} 第 {index} 项的文本标识重复。");
+                    throw new FormatException(UiText.Format("core.overrides.duplicate", context, index));
 
                 overrides.Add(id, text);
             }
@@ -600,9 +602,9 @@ namespace ProbablyEdited
                     reader.DateParseHandling = DateParseHandling.None;
                     reader.SupportMultipleContent = true;
                     if (!reader.Read())
-                        throw new FormatException(context + " JSON 内容为空。");
+                        throw new FormatException(UiText.Format("core.json.empty", context));
                     if (reader.TokenType == JsonToken.Comment)
-                        throw new FormatException(context + "必须是标准 JSON，不能包含注释。");
+                        throw new FormatException(UiText.Format("core.json.standard", context));
 
                     JToken token = JToken.ReadFrom(reader, new JsonLoadSettings
                     {
@@ -610,15 +612,15 @@ namespace ProbablyEdited
                         CommentHandling = CommentHandling.Load
                     });
                     if (reader.Read())
-                        throw new FormatException(context + " JSON 后存在多余内容。");
+                        throw new FormatException(UiText.Format("core.json.trailing_content", context));
                     if (ContainsComment(token))
-                        throw new FormatException(context + "必须是标准 JSON，不能包含注释。");
+                        throw new FormatException(UiText.Format("core.json.standard", context));
                     return token;
                 }
             }
             catch (JsonException exception)
             {
-                throw new FormatException(context + " JSON 格式无效；请检查语法或重复字段。详情：" + exception.Message, exception);
+                throw new FormatException(UiText.Format("core.json.invalid", context, exception.Message), exception);
             }
         }
 
@@ -637,13 +639,13 @@ namespace ProbablyEdited
                 }
 
                 if (!found)
-                    throw new FormatException($"{context}包含不支持的字段“{property.Name}”。");
+                    throw new FormatException(UiText.Format("core.json.unsupported_field", context, property.Name));
             }
 
             for (int index = 0; index < expected.Length; index++)
             {
                 if (value.Property(expected[index]) == null)
-                    throw new FormatException($"{context}缺少必需字段“{expected[index]}”。");
+                    throw new FormatException(UiText.Format("core.json.missing_field", context, expected[index]));
             }
         }
 
@@ -651,11 +653,11 @@ namespace ProbablyEdited
         {
             JToken token = value[propertyName];
             if (token == null || token.Type != JTokenType.String)
-                throw new FormatException($"{context}字段“{propertyName}”必须是 JSON 字符串，不能为 null。");
+                throw new FormatException(UiText.Format("core.json.string_type", context, propertyName));
 
             string text = token.Value<string>();
             if (text == null || (!allowEmpty && string.IsNullOrWhiteSpace(text)))
-                throw new FormatException($"{context}字段“{propertyName}”不能为空。");
+                throw new FormatException(UiText.Format("core.json.string_empty", context, propertyName));
 
             return text;
         }
@@ -663,7 +665,7 @@ namespace ProbablyEdited
         private static int RequireInt(JToken token, string context)
         {
             if (token == null || token.Type != JTokenType.Integer)
-                throw new FormatException(context + "必须是整数。");
+                throw new FormatException(UiText.Format("core.json.integer", context));
 
             try
             {
@@ -671,7 +673,7 @@ namespace ProbablyEdited
             }
             catch (Exception exception) when (exception is FormatException || exception is OverflowException || exception is InvalidCastException)
             {
-                throw new FormatException(context + "超出有效整数范围。", exception);
+                throw new FormatException(UiText.Format("core.json.integer_range", context), exception);
             }
         }
 
@@ -750,6 +752,11 @@ namespace ProbablyEdited
 
         private static string GetDefaultPresetName(int number)
         {
+            return UiText.Format("preset.default_name", number.ToString("00", CultureInfo.InvariantCulture));
+        }
+
+        private static string GetLegacyPresetName(int number)
+        {
             return "预设" + number.ToString("00", CultureInfo.InvariantCulture);
         }
 
@@ -775,7 +782,7 @@ namespace ProbablyEdited
         private void AddPreset(PresetRecord preset)
         {
             if (_presetsById.ContainsKey(preset.Id))
-                throw new InvalidOperationException("预设 ID 冲突；未修改工作区。");
+                throw new InvalidOperationException(UiText.Get("core.preset.id_conflict"));
 
             _presets.Add(preset);
             _presetsById.Add(preset.Id, preset);
@@ -784,9 +791,9 @@ namespace ProbablyEdited
         private PresetRecord GetPreset(string presetId)
         {
             if (string.IsNullOrWhiteSpace(presetId))
-                throw new ArgumentException("预设 ID 不能为空。", nameof(presetId));
+                throw new ArgumentException(UiText.Get("core.workspace.invalid_id"), nameof(presetId));
             if (!_presetsById.TryGetValue(presetId, out PresetRecord preset))
-                throw new InvalidOperationException("指定的预设不存在。");
+                throw new InvalidOperationException(UiText.Get("core.preset.not_found"));
             return preset;
         }
 
@@ -794,7 +801,7 @@ namespace ProbablyEdited
         private static void ValidateLegacySlot(int slot)
         {
             if (slot < 1 || slot > MaxPresets)
-                throw new FormatException($"旧工作区预设序号必须在 1–{MaxPresets} 之间。");
+                throw new FormatException(UiText.Format("core.workspace.legacy_slot_range", MaxPresets));
         }
 
         private sealed class PresetRecord

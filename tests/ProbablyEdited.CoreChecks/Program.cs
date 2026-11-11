@@ -8,6 +8,7 @@ internal static class Program
 {
     private static int Main()
     {
+        TestLocalization.Initialize();
         int failures = 0;
         Run("replacement text round-trips without exporting baselines", RoundTripsReplacementText, ref failures);
         Run("export ordering is independent of edit order", ExportsDeterministically, ref failures);
@@ -17,13 +18,39 @@ internal static class Program
         Run("unavailable imported keys remain saved and other locales are not missing", RetainsUnavailableOverrides, ref failures);
         Run("saved snapshots track stage, revert, and restore", TracksSavedSnapshots, ref failures);
         Run("preview plans cannot apply after state changes", RejectsStalePlans, ref failures);
-        Run("text edit history restores undo and redo snapshots", TextHistoryRestoresSnapshots, ref failures);
+        Run("text edit history supports repeated undo and redo", TextHistoryRestoresSnapshots, ref failures);
         Run("text edit history clears redo after a new edit", TextHistoryClearsRedoAfterEditing, ref failures);
         Run("text edit history reset starts from the current target", TextHistoryResetsTarget, ref failures);
-        Run("text edit history retains selection positions", TextHistoryRetainsSelection, ref failures);
+        Run("text edit history keeps redo through selection-only replay", TextHistoryPreservesRedoAcrossSelectionChanges, ref failures);
+        Run("separate text edit histories remain isolated", TextHistoryInstancesRemainIndependent, ref failures);
+        Run("text edit history retains UTF-16 selection positions", TextHistoryRetainsSelection, ref failures);
+        Run("history shortcuts use platform command conventions", TextHistoryShortcutCommands, ref failures);
+        Run("history shortcuts respect IME and preserve ordinary characters", TextHistoryShortcutCharacterBoundaries, ref failures);
 
-        Console.WriteLine(failures == 0 ? "All 12 Core checks passed." : $"{failures} Core check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All 16 Core checks passed." : $"{failures} Core check(s) failed.");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void TextHistoryShortcutCommands()
+    {
+        Equal(TextHistoryCommand.Undo, TextHistoryShortcut.Match(false, true, false, false, false, true, false, false), "Ctrl+Z must undo.");
+        Equal(TextHistoryCommand.Redo, TextHistoryShortcut.Match(false, true, false, false, false, false, true, false), "Ctrl+Y must redo.");
+        Equal(TextHistoryCommand.Redo, TextHistoryShortcut.Match(false, true, false, true, false, true, false, false), "Ctrl+Shift+Z must redo.");
+        Equal(TextHistoryCommand.Undo, TextHistoryShortcut.Match(true, false, true, false, false, true, false, false), "Command+Z must undo on macOS.");
+        Equal(TextHistoryCommand.Redo, TextHistoryShortcut.Match(true, false, true, true, false, true, false, false), "Command+Shift+Z must redo on macOS.");
+        Equal(TextHistoryCommand.None, TextHistoryShortcut.Match(true, true, false, false, false, true, false, false), "Control is not the macOS primary modifier.");
+        Equal(TextHistoryCommand.None, TextHistoryShortcut.Match(true, false, true, false, false, false, true, false), "Command+Y is not the selected macOS redo chord.");
+    }
+
+    private static void TextHistoryShortcutCharacterBoundaries()
+    {
+        Equal(TextHistoryCommand.None, TextHistoryShortcut.Match(false, true, false, false, true, true, false, false), "Alt-modified input must not undo.");
+        Equal(TextHistoryCommand.None, TextHistoryShortcut.Match(false, true, false, false, false, true, false, true), "IME composition must not trigger history commands.");
+        Ensure(TextHistoryShortcut.BlocksCharacter(TextHistoryCommand.Undo, 'z'), "A shortcut must not append its letter.");
+        Ensure(TextHistoryShortcut.BlocksCharacter(TextHistoryCommand.Undo, '\u001a'), "A shortcut must not append its control character.");
+        Ensure(TextHistoryShortcut.BlocksCharacter(TextHistoryCommand.Redo, 'Y'), "Redo must not append its letter.");
+        Ensure(!TextHistoryShortcut.BlocksCharacter(TextHistoryCommand.None, 'z'), "Ordinary typing must retain z.");
+        Ensure(!TextHistoryShortcut.BlocksCharacter(TextHistoryCommand.Undo, '字'), "The guard must not filter unrelated Unicode text.");
     }
 
     private static void TextHistoryRestoresSnapshots()
@@ -32,11 +59,23 @@ internal static class Program
         history.Reset("hello", 5, 5);
         history.Record("hello!", 6, 6);
         history.Record("hello!!", 7, 7);
+        history.Record("hello!!!", 8, 8);
 
-        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable after two edits.");
-        Equal("hello!", undone.Text, "Undo did not restore the previous text.");
-        Ensure(history.TryRedo(out TextEditSnapshot redone), "Redo was unavailable after undo.");
-        Equal("hello!!", redone.Text, "Redo did not restore the edited text.");
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "First undo was unavailable after three edits.");
+        Equal("hello!!", undone.Text, "First undo restored the wrong text.");
+        Ensure(history.TryUndo(out undone), "Second undo was unavailable.");
+        Equal("hello!", undone.Text, "Second undo restored the wrong text.");
+        Ensure(history.TryUndo(out undone), "Undo did not return to the initial text.");
+        Equal("hello", undone.Text, "Final undo did not restore the initial text.");
+        Ensure(!history.CanUndo, "Undo remained available before the initial snapshot.");
+
+        Ensure(history.TryRedo(out TextEditSnapshot redone), "First redo was unavailable after repeated undo.");
+        Equal("hello!", redone.Text, "First redo restored the wrong text.");
+        Ensure(history.TryRedo(out redone), "Second redo was unavailable.");
+        Equal("hello!!", redone.Text, "Second redo restored the wrong text.");
+        Ensure(history.TryRedo(out redone), "Redo did not restore the latest edit.");
+        Equal("hello!!!", redone.Text, "Final redo restored the wrong text.");
+        Ensure(!history.CanRedo, "Redo remained available beyond the latest snapshot.");
     }
 
     private static void TextHistoryClearsRedoAfterEditing()
@@ -45,13 +84,15 @@ internal static class Program
         history.Reset("a", 1, 1);
         history.Record("ab", 2, 2);
         history.Record("abc", 3, 3);
-        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable after typing.");
-        Equal("ab", undone.Text, "Undo restored the wrong text before branching.");
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "First undo was unavailable after typing.");
+        Equal("ab", undone.Text, "First undo restored the wrong text before branching.");
+        Ensure(history.TryUndo(out undone), "Second undo was unavailable before branching.");
+        Equal("a", undone.Text, "Second undo did not restore the branch point.");
 
         history.Record("aB", 2, 2);
-        Ensure(!history.CanRedo, "A new edit after undo left redo history available.");
+        Ensure(!history.CanRedo, "A new edit after repeated undo left old redo history available.");
         Ensure(history.TryUndo(out undone), "The branch edit could not be undone.");
-        Equal("ab", undone.Text, "Undo did not return to the branch point.");
+        Equal("a", undone.Text, "Undo did not return to the branch point.");
         Ensure(history.TryRedo(out TextEditSnapshot redone), "The branch edit could not be redone.");
         Equal("aB", redone.Text, "Redo restored a discarded edit instead of the branch.");
     }
@@ -67,15 +108,47 @@ internal static class Program
         Equal("second target", history.Current.Text, "A target reset did not establish the current text.");
     }
 
+    private static void TextHistoryPreservesRedoAcrossSelectionChanges()
+    {
+        var history = new TextEditHistory();
+        history.Reset("initial", 7, 7);
+        history.Record("edited", 6, 6);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable before selection-only changes.");
+        Equal("initial", undone.Text, "Undo restored the wrong text before selection-only changes.");
+        history.UpdateCurrentSelection(2, 4);
+        history.Record("initial", 1, 3);
+
+        Ensure(history.CanRedo, "Selection changes or a same-text replay discarded redo history.");
+        Ensure(history.TryRedo(out TextEditSnapshot redone), "Redo was unavailable after selection-only changes.");
+        Equal("edited", redone.Text, "Redo restored the wrong text after selection-only changes.");
+    }
+
+    private static void TextHistoryInstancesRemainIndependent()
+    {
+        var first = new TextEditHistory();
+        var second = new TextEditHistory();
+        first.Reset("first", 5, 5);
+        first.Record("first edit", 10, 10);
+        second.Reset("second", 6, 6);
+        second.Record("second edit", 11, 11);
+
+        Ensure(first.TryUndo(out TextEditSnapshot firstUndo), "First history could not undo its own edit.");
+        Equal("first", firstUndo.Text, "First history restored another target's text.");
+        Equal("second edit", second.Current.Text, "Undo in the first history changed the second history.");
+        Ensure(second.TryUndo(out TextEditSnapshot secondUndo), "Second history lost its independent undo step.");
+        Equal("second", secondUndo.Text, "Second history restored another target's text.");
+    }
+
     private static void TextHistoryRetainsSelection()
     {
         var history = new TextEditHistory();
-        history.Reset("abcdef", 5, 2);
-        history.Record("abcXdef", 4, 4);
+        history.Reset("A🌙BC", 3, 5);
+        history.Record("A🌙B!C", 4, 4);
 
         Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable for selection restoration.");
-        Equal(5, undone.AnchorPosition, "Undo lost the selection anchor.");
-        Equal(2, undone.FocusPosition, "Undo lost the selection focus.");
+        Equal(3, undone.AnchorPosition, "Undo lost the UTF-16 selection anchor.");
+        Equal(5, undone.FocusPosition, "Undo lost the UTF-16 selection focus.");
     }
 
     private static void RoundTripsReplacementText()

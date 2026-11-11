@@ -23,18 +23,27 @@ namespace ProbablyEdited
         private const float ResultRowHeight = 48f;
         private const float ResultRowFontScale = 0.88f;
 
-        private static readonly List<string> ModifiedOptions = new List<string>
+        private const float SearchClearButtonWidth = 28f;
+        private const float SearchClearButtonInset = 4f;
+        private const float SearchClearTextInset = 34f;
+        private static List<string> BuildModifiedOptions()
         {
-            "全部文本",
-            "仅已修改",
-            "仅未修改"
-        };
+            return new List<string>
+            {
+                UiText.Get("editor.filter.modified.all"),
+                UiText.Get("editor.filter.modified.changed"),
+                UiText.Get("editor.filter.modified.unchanged")
+            };
+        }
 
-        private static readonly List<string> ConflictOptions = new List<string>
+        private static List<string> BuildConflictOptions()
         {
-            "冲突时保留本地",
-            "冲突时使用导入值"
-        };
+            return new List<string>
+            {
+                UiText.Get("editor.filter.conflict.keep_local"),
+                UiText.Get("editor.filter.conflict.use_imported")
+            };
+        }
 
         private readonly EditorController _controller;
         private CustomUIWindow _window;
@@ -67,6 +76,7 @@ namespace ProbablyEdited
         private Action _pendingTransition;
         private string _pendingTransitionName;
         private RectTransform _resultRowsHost;
+        private UnityEngine.UI.ScrollRect _resultRowsScrollRect;
         private float _resultRowWidth;
         private readonly List<float> _rowBaseFontSizes = new List<float>();
         private readonly List<TextEntry> _rowEntries = new List<TextEntry>();
@@ -85,6 +95,7 @@ namespace ProbablyEdited
         private CustomUIElement _sourceDropdown;
         private CustomUIElement _modifiedDropdown;
         private CustomUIElement _searchInput;
+        private CustomUIElement _clearSearchButton;
         private CustomUIElement _pageLabel;
         private CustomUIElement _previousPageButton;
         private CustomUIElement _nextPageButton;
@@ -115,6 +126,8 @@ namespace ProbablyEdited
         private List<string> _importFiles = new List<string>();
         private int _importFileIndex;
         private bool _overwriteImportConflicts;
+
+        public bool IsOpen => _window != null && _window.IsAlive;
 
         public EditorWindow(EditorController controller)
         {
@@ -180,7 +193,7 @@ namespace ProbablyEdited
             RectTransform viewport = root != null ? root.parent as RectTransform : null;
             if (viewport == null || viewport.rect.width <= 0f || viewport.rect.height <= 0f)
             {
-                throw new InvalidOperationException("无法获取原生窗口视口尺寸。");
+                throw new InvalidOperationException(UiText.Get("editor.window.viewport_missing"));
             }
 
             return viewport.rect.size;
@@ -202,7 +215,7 @@ namespace ProbablyEdited
 
         private void BuildMainWindow()
         {
-            CustomUIBuilder builder = CreateNativeSettingsWindow(WindowId, "文本工作台")
+            CustomUIBuilder builder = CreateNativeSettingsWindow(WindowId, UiText.Get("editor.window.title"))
                 .UseMetaPrefabs()
                 .SetCloseOnEscape(false)
                 .OnClose(OnMainWindowClosed);
@@ -211,7 +224,7 @@ namespace ProbablyEdited
             RectTransform panel = GetNativeWindowPanel(window);
             if (panel == null)
             {
-                throw new InvalidOperationException("无法找到原生窗口面板。");
+                throw new InvalidOperationException(UiText.Get("editor.window.panel_missing"));
             }
 
             Vector2 panelSize = new Vector2(viewportSize.x * MainWindowWidthFraction,
@@ -244,7 +257,7 @@ namespace ProbablyEdited
             BuildPresetControls(builder);
 
             builder.BeginRow(8f, TextAnchor.MiddleLeft);
-            builder.AddLabel("语言");
+            builder.AddLabel(UiText.Get("editor.filter.language"));
             builder.Last.SetFixedWidth(72f);
             builder.AddDropdown(BuildLocaleOptions(), GetSelectedLocaleIndex(), OnLocaleChanged, "locale");
             _localeDropdown = builder.Last;
@@ -252,23 +265,27 @@ namespace ProbablyEdited
             builder.End();
 
             builder.BeginRow(8f, TextAnchor.MiddleLeft);
-            builder.AddLabel("来源");
+            builder.AddLabel(UiText.Get("editor.filter.source"));
             builder.Last.SetFixedWidth(72f);
             builder.AddDropdown(BuildSourceOptions(), 0, OnSourceChanged, "source");
             _sourceDropdown = builder.Last;
             _sourceDropdown.SetFixedWidth(190f);
-            builder.AddDropdown(ModifiedOptions, _modifiedFilter, OnModifiedChanged, "modified");
+            builder.AddDropdown(BuildModifiedOptions(), _modifiedFilter, OnModifiedChanged, "modified");
             _modifiedDropdown = builder.Last;
             _modifiedDropdown.SetFixedWidth(128f);
-            builder.AddInput("搜索文本或键…", _searchQuery, null, "search", OnSearchTyping);
+            builder.AddInput(UiText.Get("editor.filter.search_placeholder"), _searchQuery, null, "search", OnSearchTyping);
             _searchInput = builder.Last;
             _searchInput.SetFlexible(1f, 0f);
             TextInputContextMenu.Attach(_searchInput, "search");
+            builder.AddButton("×", ClearSearch, "clear_search");
+            _clearSearchButton = builder.Last;
+            _clearSearchButton.SetTooltip(UiText.Get("search.clear.tooltip"));
+            InstallSearchClearButton();
             builder.End();
 
             builder.BeginRow(8f, TextAnchor.UpperLeft);
             builder.BeginPanel(resultsPanelWidth, -1f, TextAnchor.UpperLeft, 8f, 4f, "results_panel");
-            builder.AddHeader("文本条目");
+            builder.AddHeader(UiText.Get("editor.results.heading"));
             builder.BeginRow(6f, TextAnchor.MiddleLeft);
             builder.AddDropdown(BuildCategoryOptions(), 0, OnCategoryChanged, "category");
             _categoryDropdown = builder.Last;
@@ -280,12 +297,13 @@ namespace ProbablyEdited
             builder.BeginScrollFlexible(0f);
             _resultRowsHost = builder.CurrentContainer;
             builder.End();
+            _resultRowsScrollRect = _resultRowsHost.GetComponentInParent<UnityEngine.UI.ScrollRect>();
             builder.BeginRow(6f, TextAnchor.MiddleCenter);
-            builder.AddButton("上一页", PreviousPage, "previous_page");
+            builder.AddButton(UiText.Get("editor.action.previous_page"), PreviousPage, "previous_page");
             _previousPageButton = builder.Last;
-            builder.AddLabel("第 1 / 1 页 · 0 条");
+            builder.AddLabel(UiText.Format("editor.page.label", 1, 1, 0));
             _pageLabel = builder.Last;
-            builder.AddButton("下一页", NextPage, "next_page");
+            builder.AddButton(UiText.Get("editor.action.next_page"), NextPage, "next_page");
             _nextPageButton = builder.Last;
             builder.End();
             builder.End();
@@ -295,23 +313,23 @@ namespace ProbablyEdited
             builder.BeginRow(8f, TextAnchor.MiddleLeft);
             _entryTitle = AddDetailLabel(builder, "");
             _entryTitle.SetFlexible(1f, 0f);
-            builder.AddButton("详细信息", OpenEntryDetailsWindow, "entry_details");
+            builder.AddButton(UiText.Get("editor.action.show_details"), OpenEntryDetailsWindow, "entry_details");
             _entryDetailsButton = builder.Last;
             builder.End();
             _entrySource = AddDetailLabel(builder, "");
             _entryCategory = AddDetailLabel(builder, "");
-            builder.AddLabel("原文基线（只读）");
-            _originalInput = AddReadOnlyInput(builder, "原文基线", editorInputWidth, 116f, "original_text");
-            builder.AddLabel("替换文本（可多行，空内容也会保留）");
-            builder.AddInput("在此输入替换文本…", string.Empty, UpdateReplacementDraft, "replacement", UpdateReplacementDraft);
+            builder.AddLabel(UiText.Get("editor.detail.original_label"));
+            _originalInput = AddReadOnlyInput(builder, UiText.Get("editor.detail.original_placeholder"), editorInputWidth, 116f, "original_text");
+            builder.AddLabel(UiText.Get("editor.detail.replacement_label"));
+            builder.AddInput(UiText.Get("editor.detail.replacement_placeholder"), string.Empty, UpdateReplacementDraft, "replacement", UpdateReplacementDraft);
             _replacementInput = builder.Last;
             ConfigureMultiline(_replacementInput, editorInputWidth, 164f, false);
             _draftLabel = AddDetailLabel(builder, "");
             builder.End();
             builder.BeginRow(8f, TextAnchor.MiddleLeft);
-            builder.AddButton("暂存此条", StageCurrentDraft, "stage_entry");
+            builder.AddButton(UiText.Get("editor.action.stage_entry"), StageCurrentDraft, "stage_entry");
             _stageButton = builder.Last;
-            builder.AddButton("恢复原文", RestoreCurrentEntry, "restore_entry");
+            builder.AddButton(UiText.Get("editor.action.restore_original"), RestoreCurrentEntry, "restore_entry");
             _restoreButton = builder.Last;
             builder.End();
             builder.End();
@@ -329,16 +347,16 @@ namespace ProbablyEdited
             builder.End();
 
             builder.BeginRow(8f, TextAnchor.MiddleRight);
-            builder.AddButton("覆盖范围", OpenCoverageWindow, "coverage_summary");
+            builder.AddButton(UiText.Get("editor.action.coverage"), OpenCoverageWindow, "coverage_summary");
             _openCoverageButton = builder.Last;
-            _openCoverageButton.SetTooltip("查看本编辑器可枚举的文本范围与明确的覆盖缺口。");
-            builder.AddButton("导入", OpenImportWindow, "open_import");
+            _openCoverageButton.SetTooltip(UiText.Get("editor.action.coverage_tooltip"));
+            builder.AddButton(UiText.Get("editor.action.import"), OpenImportWindow, "open_import");
             _openImportButton = builder.Last;
-            builder.AddButton("导出", OpenExportWindow, "open_export");
+            builder.AddButton(UiText.Get("editor.action.export"), OpenExportWindow, "open_export");
             _openExportButton = builder.Last;
-            builder.AddButton("保存并应用", SaveAndApply, "save_apply");
+            builder.AddButton(UiText.Get("editor.action.save_apply"), SaveAndApply, "save_apply");
             _saveButton = builder.Last;
-            builder.AddButton("关闭", RequestClose, "close_editor");
+            builder.AddButton(UiText.Get("editor.action.close"), RequestClose, "close_editor");
             _closeButton = builder.Last;
             builder.End();
 
@@ -359,8 +377,8 @@ namespace ProbablyEdited
 
         private void OpenCoverageWindow()
         {
-            OpenInformationWindow("文本覆盖范围", ValueOrFallback(_controller.CoverageSummary, "覆盖统计尚未就绪。"),
-                "完整读取游戏字符串表与模组官方字典；硬编码和自建文本系统不可通用枚举。");
+            OpenInformationWindow(UiText.Get("editor.coverage.title"), ValueOrFallback(_controller.CoverageSummary, UiText.Get("editor.coverage.not_ready")),
+                UiText.Get("editor.coverage.warning"));
         }
 
 
@@ -371,24 +389,29 @@ namespace ProbablyEdited
                 return;
             }
 
-            OpenInformationWindow("详细信息", BuildEntryDetails(_selectedEntry), null);
+            OpenInformationWindow(UiText.Get("editor.details.title"), BuildEntryDetails(_selectedEntry), null);
         }
 
         private static string BuildEntryDetails(TextEntry entry)
         {
             StringBuilder details = new StringBuilder(512);
-            details.Append("来源：").Append(ValueOrFallback(entry.SourceName, "未知来源"))
-                .Append("\n来源版本：").Append(ValueOrFallback(entry.SourceVersion, "未知"))
-                .Append("\n类别：").Append(string.IsNullOrWhiteSpace(entry.Category) ? "未分类" : entry.Category)
-                .Append("\n表名：").Append(ValueOrFallback(entry.TableName, "未知表"))
-                .Append("\n键名：").Append(ValueOrFallback(entry.KeyName, "未命名文本"))
-                .Append("\n原始标识：").Append(FormatTextId(entry.Id))
-                .Append("\n语言取值：").Append(entry.IsFallback ? "回退值" : "当前语言值")
-                .Append("\n格式器：").Append(entry.IsSmart ? "智能格式文本" : "普通文本");
-            if (!string.IsNullOrWhiteSpace(entry.Description))
-            {
-                details.Append("\n用途/格式说明：").Append(entry.Description);
-            }
+            details.Append(UiText.Format("editor.details.source",
+                    ValueOrFallback(CatalogPresentation.SourceName(entry), UiText.Get("editor.detail.unknown_source"))))
+                .Append('\n').Append(UiText.Format("editor.details.source_version",
+                    ValueOrFallback(entry.SourceVersion, UiText.Get("editor.details.unknown"))))
+                .Append('\n').Append(UiText.Format("editor.details.category", CatalogPresentation.CategoryLabel(entry.Category)))
+                .Append('\n').Append(UiText.Format("editor.details.table",
+                    ValueOrFallback(entry.TableName, UiText.Get("editor.details.unknown"))))
+                .Append('\n').Append(UiText.Format("editor.details.key",
+                    ValueOrFallback(entry.KeyName, UiText.Get("editor.details.unknown"))))
+                .Append('\n').Append(UiText.Get("editor.details.raw_identifier")).Append(FormatTextId(entry.Id))
+                .Append('\n').Append(UiText.Get("editor.details.language_value"))
+                .Append(entry.IsFallback ? UiText.Get("editor.details.language_fallback") : UiText.Get("editor.details.language_current"))
+                .Append('\n').Append(UiText.Get("editor.details.formatter"))
+                .Append(entry.IsSmart ? UiText.Get("editor.details.formatter_smart") : UiText.Get("editor.details.formatter_plain"));
+            string description = CatalogPresentation.EntryDescription(entry);
+            if (!string.IsNullOrWhiteSpace(description))
+                details.Append('\n').Append(UiText.Get("editor.details.description")).Append(description);
 
             return details.ToString();
         }
@@ -405,7 +428,7 @@ namespace ProbablyEdited
             if (!string.IsNullOrEmpty(warning)) builder.AddWarning(warning);
             builder.AddInput(title, text, null, "information_details");
             ConfigureMultiline(builder.Last, 630f, 290f, true);
-            builder.AddButton("关闭", () => _coverageWindow?.Close(), "close_information");
+            builder.AddButton(UiText.Get("editor.action.close_information"), () => _coverageWindow?.Close(), "close_information");
             _coverageWindow = builder.Show();
             NativeFontSupport.Apply(_coverageWindow);
         }
@@ -488,7 +511,7 @@ namespace ProbablyEdited
                 return;
             }
 
-            TryCommitCurrentDraft(null, "关闭编辑器");
+            TryCommitCurrentDraft(null, UiText.Get("editor.transition.close_editor"));
         }
 
         private void CloseAuxiliaryWindows()
@@ -505,6 +528,7 @@ namespace ProbablyEdited
         private void ClearMainElementReferences()
         {
             _resultRowsHost = null;
+            _resultRowsScrollRect = null;
             _rowEntries.Clear();
             _rowElements.Clear();
             _rowSelections.Clear();
@@ -515,6 +539,7 @@ namespace ProbablyEdited
             _sourceDropdown = null;
             _modifiedDropdown = null;
             _searchInput = null;
+            _clearSearchButton = null;
             _pageLabel = null;
             _previousPageButton = null;
             _nextPageButton = null;
@@ -691,7 +716,7 @@ namespace ProbablyEdited
                 _localeCodes.Clear();
                 _localeNames.Clear();
                 _localeCodes.Add(string.Empty);
-                _localeNames.Add("未载入语言");
+                _localeNames.Add(UiText.Get("editor.locale.not_loaded"));
             }
 
             int count = Math.Min(_localeCodes.Count, _localeNames.Count);
@@ -761,9 +786,9 @@ namespace ProbablyEdited
                 {
                     _awaitingLocale = false;
                     ClearPreservedSelection();
-                    ShowError("切换语言失败", "无法载入所选语言。\n\n" + exception.Message);
+                    ShowError(UiText.Get("editor.error.locale_title"), UiText.Format("editor.error.locale_body", exception.Message));
                 }
-            }, "切换语言");
+            }, UiText.Get("editor.transition.change_language"));
         }
 
         private void UpdateLocaleDropdownSelection()
@@ -821,11 +846,11 @@ namespace ProbablyEdited
             List<string> sorted = new List<string>(categories);
             sorted.Sort(StringComparer.OrdinalIgnoreCase);
             _categoryValues = new List<string>(sorted.Count + 1) { null };
-            _categoryLabels = new List<string>(sorted.Count + 1) { "全部类别" };
+            _categoryLabels = new List<string>(sorted.Count + 1) { UiText.Get("category.all.label") };
             for (int i = 0; i < sorted.Count; i++)
             {
                 _categoryValues.Add(sorted[i]);
-                _categoryLabels.Add(string.IsNullOrEmpty(sorted[i]) ? "未分类" : sorted[i]);
+                _categoryLabels.Add(string.IsNullOrEmpty(sorted[i]) ? UiText.Get("editor.detail.uncategorized") : CatalogPresentation.CategoryLabel(sorted[i]));
             }
 
             if (_selectedCategory != null && !categories.Contains(_selectedCategory))
@@ -851,21 +876,21 @@ namespace ProbablyEdited
                 sourceIds.Add(sourceId);
                 if (!sourceNames.ContainsKey(sourceId))
                 {
-                    sourceNames.Add(sourceId, entry.SourceName ?? string.Empty);
+                    sourceNames.Add(sourceId, CatalogPresentation.SourceName(entry) ?? string.Empty);
                 }
             }
 
             List<string> sorted = new List<string>(sourceIds);
             sorted.Sort(StringComparer.OrdinalIgnoreCase);
             _sourceValues = new List<string>(sorted.Count + 1) { null };
-            _sourceLabels = new List<string>(sorted.Count + 1) { "全部来源" };
+            _sourceLabels = new List<string>(sorted.Count + 1) { UiText.Get("editor.filter.source.all") };
             for (int i = 0; i < sorted.Count; i++)
             {
                 string sourceId = sorted[i];
                 string sourceName = sourceNames[sourceId];
                 _sourceValues.Add(sourceId);
                 _sourceLabels.Add(string.IsNullOrWhiteSpace(sourceName) || string.Equals(sourceName, sourceId, StringComparison.Ordinal)
-                    ? "未知来源"
+                    ? UiText.Get("editor.detail.unknown_source")
                     : sourceName);
             }
 
@@ -914,7 +939,7 @@ namespace ProbablyEdited
 
         private void OnModifiedChanged(int index)
         {
-            if (index < 0 || index >= ModifiedOptions.Count)
+            if (index < 0 || index >= 3)
             {
                 return;
             }
@@ -926,10 +951,63 @@ namespace ProbablyEdited
 
         private void OnSearchTyping(string value)
         {
+            RefreshSearchClearButton();
             _searchQuery = value ?? string.Empty;
             _page = 0;
             RefreshRows();
         }
+        private void InstallSearchClearButton()
+        {
+            if (_searchInput == null || _searchInput.input == null || _clearSearchButton == null)
+                return;
+
+            RectTransform buttonRect = _clearSearchButton.Rect;
+            if (buttonRect == null)
+                return;
+
+            buttonRect.SetParent(_searchInput.Rect, false);
+            buttonRect.anchorMin = new Vector2(1f, 0.5f);
+            buttonRect.anchorMax = new Vector2(1f, 0.5f);
+            buttonRect.pivot = new Vector2(1f, 0.5f);
+            buttonRect.sizeDelta = new Vector2(SearchClearButtonWidth, SearchClearButtonWidth);
+            buttonRect.anchoredPosition = new Vector2(-SearchClearButtonInset, 0f);
+            buttonRect.SetAsLastSibling();
+
+            UnityEngine.UI.LayoutElement layout = buttonRect.GetComponent<UnityEngine.UI.LayoutElement>();
+            if (layout != null)
+                layout.ignoreLayout = true;
+
+            RectTransform textViewport = _searchInput.input.textViewport;
+            if (textViewport != null)
+                textViewport.offsetMax = new Vector2(textViewport.offsetMax.x - SearchClearTextInset, textViewport.offsetMax.y);
+
+            BindVisibleMetaText(_clearSearchButton);
+            _clearSearchButton.SetText("×");
+            NativeFontSupport.Apply(_clearSearchButton);
+            RefreshSearchClearButton();
+        }
+
+        private void RefreshSearchClearButton()
+        {
+            if (_clearSearchButton == null || _clearSearchButton.root == null)
+                return;
+
+            bool hasQuery = _searchInput != null && _searchInput.input != null && !string.IsNullOrEmpty(_searchInput.input.text);
+            _clearSearchButton.SetInteractable(hasQuery);
+            _clearSearchButton.root.SetActive(hasQuery);
+        }
+
+        private void ClearSearch()
+        {
+            TMP_InputField input = _searchInput != null ? _searchInput.input : null;
+            if (input == null || string.IsNullOrEmpty(input.text))
+                return;
+
+            input.text = string.Empty;
+            input.Select();
+            input.ActivateInputField();
+        }
+
 
         private void SelectInitialEntry()
         {
@@ -1068,8 +1146,16 @@ namespace ProbablyEdited
                 {
                     builder = new CustomUIBuilder(CustomUIManager.Instance, _window, _resultRowsHost);
                     builder.UseMetaPrefabs();
-                    builder.AddLabel("没有匹配的文本。");
+                    builder.AddLabel(UiText.Get("search.no_results"));
                     _emptyResultsLabel = builder.Last;
+                    BindVisibleMetaText(_emptyResultsLabel);
+                    _emptyResultsLabel.SetText(UiText.Get("search.no_results"));
+                    _emptyResultsLabel.SetPreferredSize(_resultRowWidth, ResultRowHeight);
+                    if (_emptyResultsLabel.text != null)
+                    {
+                        _emptyResultsLabel.text.alignment = TextAlignmentOptions.MidlineLeft;
+                        _emptyResultsLabel.text.enableWordWrapping = false;
+                    }
                     NativeFontSupport.Apply(_emptyResultsLabel);
                 }
 
@@ -1143,7 +1229,12 @@ namespace ProbablyEdited
             }
 
             CustomUIBuilder.RebuildLayout(_resultRowsHost);
-            _pageLabel?.SetText("第 " + (_page + 1) + " / " + pageCount + " 页 · " + filteredCount + " 条");
+            _pageLabel?.SetText(UiText.Format("editor.page.label", _page + 1, pageCount, filteredCount));
+            if (filteredCount == 0 && _resultRowsScrollRect != null)
+            {
+                _resultRowsScrollRect.StopMovement();
+                _resultRowsScrollRect.verticalNormalizedPosition = 1f;
+            }
             _previousPageButton?.SetInteractable(_page > 0 && !_controller.IsLoading);
             _nextPageButton?.SetInteractable(_page + 1 < pageCount && !_controller.IsLoading);
             RefreshMainStatus();
@@ -1209,12 +1300,12 @@ namespace ProbablyEdited
                 || ContainsIgnoreCase(entry.Id.Locale, query)
                 || ContainsIgnoreCase(entry.Id.TableId, query)
                 || ContainsIgnoreCase(entry.Id.Key, query)
-                || ContainsIgnoreCase(entry.SourceName, query)
+                || ContainsIgnoreCase(CatalogPresentation.SourceName(entry), query)
                 || ContainsIgnoreCase(entry.SourceVersion, query)
                 || ContainsIgnoreCase(entry.TableName, query)
                 || ContainsIgnoreCase(entry.KeyName, query)
-                || ContainsIgnoreCase(entry.Category, query)
-                || ContainsIgnoreCase(entry.Description, query)
+                || CatalogPresentation.CategoryContains(entry.Category, query)
+                || CatalogPresentation.EntryDescriptionContains(entry, query)
                 || ContainsIgnoreCase(entry.OriginalText, query)
                 || ContainsIgnoreCase(_controller.State.GetText(entry), query);
         }
@@ -1236,7 +1327,7 @@ namespace ProbablyEdited
             text.Append(preview);
             if (_controller.State.IsModified(entry))
             {
-                text.Append("  · 已改");
+                text.Append(UiText.Get("editor.row.modified_mark"));
             }
 
             return text.ToString();
@@ -1291,7 +1382,7 @@ namespace ProbablyEdited
         {
             if (string.IsNullOrEmpty(text))
             {
-                return "（空文本）";
+                return UiText.Get("editor.row.empty_text");
             }
 
             StringBuilder preview = new StringBuilder(Math.Min(maxLength + 1, text.Length));
@@ -1375,7 +1466,7 @@ namespace ProbablyEdited
                 return;
             }
 
-            TryCommitCurrentDraft(() => SelectEntry(entry), "切换文本");
+            TryCommitCurrentDraft(() => SelectEntry(entry), UiText.Get("editor.transition.change_text"));
         }
 
         private void SelectEntry(TextEntry entry)
@@ -1391,7 +1482,7 @@ namespace ProbablyEdited
             RememberDisplayContext();
             if (_selectedEntry == null)
             {
-                _entryTitle?.SetText("请选择一条文本。");
+                _entryTitle?.SetText(UiText.Get("editor.detail.no_selection"));
                 _entrySource?.SetText(string.Empty);
                 _entryCategory?.SetText(string.Empty);
                 _entryDetailsButton?.SetInteractable(false);
@@ -1404,9 +1495,10 @@ namespace ProbablyEdited
             }
 
             TextEntry entry = _selectedEntry;
-            _entryTitle?.SetText("文本条目");
-            _entrySource?.SetText("来源：" + ValueOrFallback(entry.SourceName, "未知来源"));
-            _entryCategory?.SetText("类别：" + (string.IsNullOrWhiteSpace(entry.Category) ? "未分类" : entry.Category));
+            _entryTitle?.SetText(UiText.Get("editor.detail.entry_title"));
+            _entrySource?.SetText(UiText.Format("editor.detail.source_label",
+                ValueOrFallback(CatalogPresentation.SourceName(entry), UiText.Get("editor.detail.unknown_source"))));
+            _entryCategory?.SetText(UiText.Format("editor.detail.category_label", CatalogPresentation.CategoryLabel(entry.Category)));
             _entryDetailsButton?.SetInteractable(true);
             SetReadOnlyText(_originalInput, NullFallback(entry.OriginalText, string.Empty));
             SetReplacementText(_replacementDraft);
@@ -1453,15 +1545,15 @@ namespace ProbablyEdited
             string message;
             if (HasDraftChanges())
             {
-                message = "有未暂存输入；离开此条前会先检查并保留。";
+                message = UiText.Get("editor.detail.draft.unstaged");
             }
             else if (_controller.State.IsModified(_selectedEntry))
             {
-                message = "此条已暂存；保存并应用后才会持久化。";
+                message = UiText.Get("editor.detail.draft.staged");
             }
             else
             {
-                message = "此条与原文一致。";
+                message = UiText.Get("editor.detail.draft.original");
             }
 
             _draftLabel.SetText(message);
@@ -1491,7 +1583,7 @@ namespace ProbablyEdited
 
         private void StageCurrentDraft()
         {
-            TryCommitCurrentDraft(null, "暂存文本");
+            TryCommitCurrentDraft(null, UiText.Get("editor.transition.stage_text"));
         }
 
         private void RestoreCurrentEntry()
@@ -1518,9 +1610,9 @@ namespace ProbablyEdited
                 }
                 catch (Exception exception)
                 {
-                    ShowError("恢复原文失败", "无法暂存原文恢复操作。\n\n" + exception.Message);
+                    ShowError(UiText.Get("editor.error.restore.title"), UiText.Format("editor.error.restore.message", exception.Message));
                 }
-            }, "恢复原文");
+            }, UiText.Get("editor.transition.restore_original"));
         }
 
         private void SaveAndApply()
@@ -1530,14 +1622,14 @@ namespace ProbablyEdited
                 return;
             }
 
-            TryCommitCurrentDraft(BeginSaveAndApply, "保存并应用");
+            TryCommitCurrentDraft(BeginSaveAndApply, UiText.Get("editor.transition.save_apply"));
         }
 
         private void BeginSaveAndApply()
         {
             if (!_controller.HasUnsavedChanges && _controller.SelectedPresetId == _controller.ActivePresetId)
             {
-                RefreshMainStatus("工作区没有未保存修改，所选预设也已应用。");
+                RefreshMainStatus(UiText.Get("editor.status.no_changes_to_save"));
                 return;
             }
 
@@ -1568,7 +1660,7 @@ namespace ProbablyEdited
                 SetMainControlsInteractable(!_controller.IsLoading);
                 UpdateImportWindow();
                 RefreshMainStatus();
-                ShowError("保存并应用失败", "修改仍保留在本次编辑状态中。\n\n" + exception.Message);
+                ShowError(UiText.Get("editor.error.save_apply.title"), UiText.Format("editor.error.save_apply.message", exception.Message));
             }
         }
 
@@ -1599,11 +1691,11 @@ namespace ProbablyEdited
             if (failed)
             {
                 RefreshMainStatus();
-                ShowError("保存或应用未完成", ValueOrFallback(_controller.Status, "工作区修改或预设切换仍未完成，请检查错误信息后重试。"));
+                ShowError(UiText.Get("editor.error.save_incomplete.title"), ValueOrFallback(_controller.Status, UiText.Get("editor.error.save_incomplete.fallback")));
                 return;
             }
 
-            RefreshMainStatus("保存并应用完成。");
+            RefreshMainStatus(UiText.Get("editor.status.save_complete"));
         }
 
         private void RequestClose()
@@ -1618,17 +1710,17 @@ namespace ProbablyEdited
                 {
                     Unsubscribe();
                 }
-            }, "关闭编辑器");
+            }, UiText.Get("editor.transition.close_editor"));
         }
 
         private void OpenImportWindow()
         {
-            TryCommitCurrentDraft(BuildImportWindow, "打开导入窗口");
+            TryCommitCurrentDraft(BuildImportWindow, UiText.Get("editor.transition.open_import"));
         }
 
         private void OpenExportWindow()
         {
-            TryCommitCurrentDraft(BuildExportWindow, "打开导出窗口");
+            TryCommitCurrentDraft(BuildExportWindow, UiText.Get("editor.transition.open_export"));
         }
 
         private void TryCommitCurrentDraft(Action afterCommit, string transitionName)
@@ -1663,7 +1755,7 @@ namespace ProbablyEdited
             }
             catch (Exception exception)
             {
-                ShowError("文本检查失败", "当前输入仍保留在编辑器中，尚未暂存。\n\n" + exception.Message);
+                ShowError(UiText.Get("editor.error.check.title"), UiText.Format("editor.error.check.message", exception.Message));
                 return;
             }
 
@@ -1695,20 +1787,20 @@ namespace ProbablyEdited
                 return;
             }
 
-            CustomUIBuilder builder = CreateNativeSettingsWindow(ValidationWindowId, "文本检查提示")
+            CustomUIBuilder builder = CreateNativeSettingsWindow(ValidationWindowId, UiText.Get("editor.validation.title"))
                 .UseMetaPrefabs()
                 .Center()
                 .SetCloseOnEscape(true)
                 .OnClose(OnValidationWindowClosed);
 
-            builder.AddHeader("暂存前需要确认");
-            builder.AddWarning("格式检查发现以下内容。确认前不会更改暂存状态；检查提示可能涉及占位符或富文本标记。");
-            builder.AddLabel("操作：" + transitionName);
-            builder.AddInput("检查提示", JoinLines(warnings), null, "validation_details");
+            builder.AddHeader(UiText.Get("editor.validation.heading"));
+            builder.AddWarning(UiText.Get("editor.validation.warning"));
+            builder.AddLabel(UiText.Format("editor.validation.action", transitionName));
+            builder.AddInput(UiText.Get("editor.validation.details_placeholder"), JoinLines(warnings), null, "validation_details");
             ConfigureMultiline(builder.Last, 590f, 220f, true);
             builder.BeginRow(8f, TextAnchor.MiddleRight);
-            builder.AddButton("返回编辑", ReturnFromValidation, "validation_return");
-            builder.AddButton("确认仍然暂存", ApproveValidation, "validation_accept");
+            builder.AddButton(UiText.Get("editor.validation.return"), ReturnFromValidation, "validation_return");
+            builder.AddButton(UiText.Get("editor.validation.confirm"), ApproveValidation, "validation_accept");
             builder.End();
             _validationWindow = builder.Show();
             NativeFontSupport.Apply(_validationWindow);
@@ -1802,7 +1894,7 @@ namespace ProbablyEdited
             }
             catch (Exception exception)
             {
-                ShowError("暂存文本失败", "当前输入仍保留在编辑器中。\n\n" + exception.Message);
+                ShowError(UiText.Get("editor.error.stage.title"), UiText.Format("editor.error.stage.message", exception.Message));
             }
         }
 
@@ -1820,7 +1912,7 @@ namespace ProbablyEdited
             }
             catch (Exception exception)
             {
-                ShowError(transitionName + "失败", exception.Message);
+                ShowError(UiText.Format("editor.error.transition_failed", transitionName), exception.Message);
             }
         }
 
@@ -1833,52 +1925,39 @@ namespace ProbablyEdited
 
             string status = localMessage;
             if (_saveApplyPending)
-            {
-                status = _controller.IsLoading ? "正在载入语言并保存…" : "正在保存并应用…";
-            }
+                status = UiText.Get(_controller.IsLoading ? "editor.status.loading_for_apply" : "editor.status.saving");
 
             if (string.IsNullOrWhiteSpace(status))
             {
                 if (_controller.IsLoading)
-                {
-                    status = "正在载入文本目录…";
-                }
+                    status = UiText.Get("editor.status.loading_catalog");
                 else if (string.IsNullOrWhiteSpace(_controller.Status))
-                {
-                    status = "就绪。";
-                }
-                else if (_controller.Status.StartsWith("已读取 ", StringComparison.Ordinal))
-                {
-                    status = "文本目录已就绪。";
-                }
-                else if (_controller.Status.StartsWith("已选择", StringComparison.Ordinal))
-                {
-                    status = "编辑目标已切换。";
-                }
+                    status = UiText.Get("editor.status.ready");
+                else if (_controller.StatusKind == EditorStatusKind.CatalogReady)
+                    status = UiText.Get("editor.status.catalog_ready");
+                else if (_controller.StatusKind == EditorStatusKind.PresetSelected)
+                    status = UiText.Get("editor.status.target_changed");
                 else
-                {
                     status = _controller.Status;
-                }
             }
 
             _statusLabel?.SetText(status);
             if (_dirtyLabel != null)
             {
-                string state = _controller.HasUnsavedChanges ? "工作区未保存" : "工作区已保存";
-                state += " · " + _controller.State.OverrideCount + " 项覆盖";
+                string state = UiText.Get(_controller.HasUnsavedChanges
+                    ? "editor.status.workspace_dirty"
+                    : "editor.status.workspace_saved");
+                state += UiText.Format("editor.status.override_count", _controller.State.OverrideCount);
                 if (_controller.State.UnavailableOverrideCount > 0)
-                {
-                    state += " · " + _controller.State.UnavailableOverrideCount + " 项不可用";
-                }
+                    state += UiText.Format("editor.status.unavailable_count", _controller.State.UnavailableOverrideCount);
 
                 _dirtyLabel.SetText(state);
             }
 
             if (_saveButton != null)
-            {
                 _saveButton.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _pendingEntry == null && CanSave());
-            }
         }
+
 
         private bool CanSave()
         {
@@ -1901,10 +1980,10 @@ namespace ProbablyEdited
                 .SetCloseOnEscape(true)
                 .OnClose(() => _errorWindow = null);
             builder.AddWarning(title);
-            builder.AddInput("详细信息", message ?? string.Empty, null, "error_details");
+            builder.AddInput(UiText.Get("editor.error.details"), message ?? string.Empty, null, "error_details");
             ConfigureMultiline(builder.Last, 570f, 230f, true);
             builder.BeginRow(8f, TextAnchor.MiddleRight);
-            builder.AddButton("重新打开编辑器", () =>
+            builder.AddButton(UiText.Get("editor.error.reopen"), () =>
             {
                 if (_window == null || !_window.IsAlive)
                 {
@@ -1920,7 +1999,7 @@ namespace ProbablyEdited
                     _errorWindow.Close();
                 }
             }, "error_return");
-            builder.AddButton("关闭提示", () =>
+            builder.AddButton(UiText.Get("editor.error.close"), () =>
             {
                 if (_errorWindow != null && _errorWindow.IsAlive)
                 {
@@ -1965,7 +2044,7 @@ namespace ProbablyEdited
             _importTargetPresetId = _controller.SelectedPresetId;
             _importPreview = null;
             RefreshImportFileList();
-            CustomUIBuilder builder = CreateNativeSettingsWindow(ImportWindowId, "合并导入")
+            CustomUIBuilder builder = CreateNativeSettingsWindow(ImportWindowId, UiText.Get("editor.import.title"))
                 .UseMetaPrefabs()
                 .Center()
                 .SetCloseOnEscape(true)
@@ -1981,15 +2060,15 @@ namespace ProbablyEdited
                     _importPreview = null;
                 });
 
-            builder.AddHeader("导入一个预设文件");
-            builder.AddLabel("数据目录：" + ValueOrFallback(_controller.DataFolder, "不可用"));
-            builder.AddLabel("选择一个文件和一个目标预设；预览只检查合并结果，确认后仍需保存并应用。");
+            builder.AddHeader(UiText.Get("editor.import.heading"));
+            builder.AddLabel(UiText.Format("editor.import.data_directory", ValueOrFallback(_controller.DataFolder, UiText.Get("editor.details.unknown"))));
+            builder.AddLabel(UiText.Get("editor.import.instructions"));
             builder.BeginRow(8f, TextAnchor.MiddleLeft);
             builder.AddDropdown(BuildImportFileOptions(), GetImportFileIndex(), OnImportFileChanged, "import_file");
             _importFilesDropdown = builder.Last;
             _importFilesDropdown.SetFlexible(1f, 0f);
-            builder.AddButton("刷新列表", RefreshImportFileList, "refresh_import_files");
-            builder.AddButton("预览", PreviewImport, "preview_import");
+            builder.AddButton(UiText.Get("editor.import.refresh"), RefreshImportFileList, "refresh_import_files");
+            builder.AddButton(UiText.Get("editor.import.preview"), PreviewImport, "preview_import");
             _importPreviewButton = builder.Last;
             builder.End();
 
@@ -1998,20 +2077,20 @@ namespace ProbablyEdited
             builder.End();
 
             _importFileLabel = AddDetailLabel(builder, "");
-            builder.AddLabel("合并预览");
-            builder.AddInput("预览结果", string.Empty, null, "import_preview");
+            builder.AddLabel(UiText.Get("editor.import.preview_heading"));
+            builder.AddInput(UiText.Get("editor.import.preview_placeholder"), string.Empty, null, "import_preview");
             _importPreviewText = builder.Last;
             ConfigureMultiline(_importPreviewText, 710f, 245f, true);
 
             builder.BeginRow(8f, TextAnchor.MiddleLeft);
-            builder.AddLabel("冲突处理");
+            builder.AddLabel(UiText.Get("editor.import.conflict_handling"));
             builder.Last.SetFixedWidth(112f);
-            builder.AddDropdown(ConflictOptions, 0, OnImportConflictChanged, "import_conflict");
+            builder.AddDropdown(BuildConflictOptions(), 0, OnImportConflictChanged, "import_conflict");
             builder.Last.SetFixedWidth(210f);
-            builder.AddButton("合并导入并暂存", ConfirmImport, "confirm_import");
+            builder.AddButton(UiText.Get("editor.import.confirm"), ConfirmImport, "confirm_import");
             _importConfirmButton = builder.Last;
             builder.End();
-            builder.AddButton("关闭", () => _importWindow?.Close(), "close_import");
+            builder.AddButton(UiText.Get("editor.import.close"), () => _importWindow?.Close(), "close_import");
 
             _importWindow = builder.Show();
             NativeFontSupport.Apply(_importWindow);
@@ -2047,7 +2126,7 @@ namespace ProbablyEdited
             }
             catch (Exception exception)
             {
-                ShowError("读取导入文件失败", "无法读取模组管理目录中的 JSON 文件列表。\n\n" + exception.Message);
+                ShowError(UiText.Get("editor.error.import_read.title"), UiText.Format("editor.error.import_read.message", exception.Message));
             }
         }
 
@@ -2055,7 +2134,7 @@ namespace ProbablyEdited
         {
             if (_importFiles.Count == 0)
             {
-                return new List<string> { "（没有可导入文件）" };
+                return new List<string> { UiText.Get("editor.import.no_files_option") };
             }
 
             return new List<string>(_importFiles);
@@ -2099,8 +2178,8 @@ namespace ProbablyEdited
             _importFilesDropdown?.SetIndex(GetImportFileIndex(), false);
             RefreshImportTargetOptions();
             _importFileLabel?.SetText(_importFiles.Count == 0
-                ? "尚未发现 JSON 文件。将单个文件复制到模组数据目录后刷新列表。"
-                : "文件：" + _importFiles[GetImportFileIndex()]);
+                ? UiText.Get("editor.import.no_files")
+                : UiText.Format("editor.import.file", _importFiles[GetImportFileIndex()]));
             SetReadOnlyText(_importPreviewText, FormatImportPreview(_importPreview));
             _importFilesDropdown?.SetInteractable(!_controller.IsLoading && !_saveApplyPending);
             _importPreviewButton?.SetInteractable(_importFiles.Count > 0 && !_controller.IsLoading && !_saveApplyPending);
@@ -2110,28 +2189,29 @@ namespace ProbablyEdited
         {
             if (preview == null)
             {
-                return "选择文件和目标预设后点击“预览”。";
+                return UiText.Get("editor.import.preview_prompt");
             }
 
             StringBuilder summary = new StringBuilder();
-            summary.Append("目标：").Append(preview.CreatesPreset
-                ? "新建预设 · " + preview.PresetName
-                : GetPresetLabel(preview.TargetPresetId));
+            string target = preview.CreatesPreset
+                ? UiText.Format("editor.import.new_target", preview.PresetName)
+                : GetPresetLabel(preview.TargetPresetId);
+            summary.Append(UiText.Format("editor.import.target", target));
             if (preview.CreatesPreset)
             {
-                summary.Append("（确认后创建）");
+                summary.Append(UiText.Get("editor.import.create_after_confirm"));
             }
 
             summary.Append('\n');
-            AppendPresetStatistics(summary, "导入内容", preview.Incoming);
+            AppendPresetStatistics(summary, UiText.Get("editor.import.stats.incoming"), preview.Incoming);
             summary.Append('\n');
-            AppendPresetStatistics(summary, "目标已有", preview.Existing);
-            summary.Append("\n冲突：").Append(preview.ConflictCount)
-                .Append("\n当前已知语言/目录中不可用：").Append(preview.UnavailableCount)
-                .Append("\n\n检查信息：");
+            AppendPresetStatistics(summary, UiText.Get("editor.import.stats.existing"), preview.Existing);
+            summary.Append('\n').Append(UiText.Format("editor.import.conflicts", preview.ConflictCount))
+                .Append('\n').Append(UiText.Format("editor.import.unavailable", preview.UnavailableCount))
+                .Append(UiText.Get("editor.import.checks"));
             if (preview.Warnings == null || preview.Warnings.Count == 0)
             {
-                summary.Append("无");
+                summary.Append(UiText.Get("editor.import.no_warnings"));
             }
             else
             {
@@ -2157,14 +2237,14 @@ namespace ProbablyEdited
             {
                 _importPreview = null;
                 UpdateImportWindow();
-                ShowError("导入预览失败", "所选文件未被暂存；请检查目标预设、格式、版本和文件内容。\n\n" + exception.Message);
+                ShowError(UiText.Get("editor.error.import_preview.title"), UiText.Format("editor.error.import_preview.message", exception.Message));
             }
         }
         private void ConfirmImport()
         {
             if (_importPreview == null)
             {
-                ShowError("尚未预览文件", "请先选择一个 JSON 文件和目标预设，查看完整预览后再合并导入。");
+                ShowError(UiText.Get("editor.error.import_unpreviewed.title"), UiText.Get("editor.error.import_unpreviewed.message"));
                 return;
             }
 
@@ -2175,7 +2255,7 @@ namespace ProbablyEdited
                 {
                     _importPreview = null;
                     PreviewImport();
-                    RefreshMainStatus("编辑内容已暂存，导入预览已更新；请核对后再次确认合并。");
+                    RefreshMainStatus(UiText.Get("editor.status.import_preview_updated"));
                     return;
                 }
 
@@ -2190,15 +2270,15 @@ namespace ProbablyEdited
                     RefreshRows();
                     RefreshPresetControls();
                     UpdateImportWindow();
-                    RefreshMainStatus("合并导入已暂存；保存并应用后才会持久化并切换游戏文本。");
+                    RefreshMainStatus(UiText.Get("editor.status.import_staged"));
                 }
                 catch (Exception exception)
                 {
                     _importPreview = null;
                     UpdateImportWindow();
-                    ShowError("暂存导入失败", "合并未完成；本地修改应保持不变。请重新预览后重试。\n\n" + exception.Message);
+                    ShowError(UiText.Get("editor.error.import_stage.title"), UiText.Format("editor.error.import_stage.message", exception.Message));
                 }
-            }, "合并导入");
+            }, UiText.Get("editor.transition.merge_import"));
         }
         private void BuildExportWindow()
         {
@@ -2209,7 +2289,7 @@ namespace ProbablyEdited
             }
 
             _exportPresetId = _controller.SelectedPresetId;
-            CustomUIBuilder builder = CreateNativeSettingsWindow(ExportWindowId, "导出一个预设")
+            CustomUIBuilder builder = CreateNativeSettingsWindow(ExportWindowId, UiText.Get("editor.export.title"))
                 .UseMetaPrefabs()
                 .Center()
                 .SetCloseOnEscape(true)
@@ -2222,20 +2302,20 @@ namespace ProbablyEdited
                     _exportButton = null;
                 });
 
-            builder.AddHeader("导出单个预设");
+            builder.AddHeader(UiText.Get("editor.export.heading"));
             BuildExportPresetControls(builder);
-            builder.AddLabel("文件名（不含 .json）：");
-            builder.AddInput("例如 zh_patch", _exportName, OnExportNameChanged, "export_name", OnExportNameChanged);
+            builder.AddLabel(UiText.Get("editor.export.filename_label"));
+            builder.AddInput(UiText.Get("editor.export.filename_placeholder"), _exportName, OnExportNameChanged, "export_name", OnExportNameChanged);
             TextInputContextMenu.Attach(builder.Last, "export_name");
-            builder.AddLabel("结果 / 输出路径");
-            builder.AddInput("导出后显示控制器返回的完整路径", string.Empty, null, "export_result");
+            builder.AddLabel(UiText.Get("editor.export.result_label"));
+            builder.AddInput(UiText.Get("editor.export.result_placeholder"), string.Empty, null, "export_result");
             _exportResultInput = builder.Last;
             ConfigureMultiline(_exportResultInput, 600f, 76f, true);
-            builder.AddLabel("只导出所选预设的覆盖，不包含原文基线或其他预设。");
+            builder.AddLabel(UiText.Get("editor.export.help"));
             builder.BeginRow(8f, TextAnchor.MiddleRight);
-            builder.AddButton("导出 JSON", ExportPatch, "export_patch");
+            builder.AddButton(UiText.Get("editor.export.json"), ExportPatch, "export_patch");
             _exportButton = builder.Last;
-            builder.AddButton("关闭", () => _exportWindow?.Close(), "close_export");
+            builder.AddButton(UiText.Get("editor.export.close"), () => _exportWindow?.Close(), "close_export");
             builder.End();
             _exportWindow = builder.Show();
             NativeFontSupport.Apply(_exportWindow);
@@ -2254,7 +2334,7 @@ namespace ProbablyEdited
 
         private void ExportPatch()
         {
-            TryCommitCurrentDraft(ExportSelectedPreset, "导出预设");
+            TryCommitCurrentDraft(ExportSelectedPreset, UiText.Get("editor.transition.export_preset"));
         }
         private void ExportSelectedPreset()
         {
@@ -2262,12 +2342,12 @@ namespace ProbablyEdited
             {
                 _controller.Export(_exportName, _exportPresetId);
                 UpdateExportStatistics();
-                SetReadOnlyText(_exportResultInput, ValueOrFallback(_controller.Status, "导出完成。"));
+                SetReadOnlyText(_exportResultInput, ValueOrFallback(_controller.Status, UiText.Get("editor.status.export_complete")));
                 RefreshMainStatus();
             }
             catch (Exception exception)
             {
-                ShowError("导出失败", "未能导出所选预设；请检查文件名和模组数据目录。\n\n" + exception.Message);
+                ShowError(UiText.Get("editor.error.export.title"), UiText.Format("editor.error.export.message", exception.Message));
             }
         }
 

@@ -8,6 +8,13 @@ using UnityEngine.Localization.Settings;
 
 namespace ProbablyEdited
 {
+    public enum EditorStatusKind
+    {
+        CatalogReady,
+        PresetSelected,
+        Message
+    }
+
     public sealed class EditorController : IDisposable
     {
         private const string WorkspaceFile = "presets.json";
@@ -26,6 +33,10 @@ namespace ProbablyEdited
         private bool storageReadable = true;
         private bool runtimeConsistent = true;
         private bool activeSnapshotAvailable = true;
+        private string statusKey = "status.preparing";
+        private object[] statusArguments = Array.Empty<object>();
+        private string statusSuffixKey;
+        private string statusSecondarySuffixKey;
         private static readonly Regex Placeholder = new Regex(@"(?<!\{)\{([A-Za-z_][A-Za-z0-9_.]*|\d+)(?=[}:,\[])");
         private static readonly Regex Tag = new Regex(@"</?([A-Za-z][A-Za-z0-9-]*)(?:=[^>]*)?>");
 
@@ -37,7 +48,19 @@ namespace ProbablyEdited
         public bool CanCreatePreset => workspace.CanCreatePreset;
         public bool CanDeleteSelectedPreset => workspace.CanDeleteSelectedPreset;
         public bool IsLoading { get; private set; }
-        public string Status { get; private set; } = "正在准备本地化数据库…";
+        public string Status
+        {
+            get
+            {
+                string message = statusArguments.Length == 0
+                    ? UiText.Get(statusKey)
+                    : UiText.Format(statusKey, statusArguments);
+                if (statusSuffixKey != null) message += UiText.Get(statusSuffixKey);
+                if (statusSecondarySuffixKey != null) message += UiText.Get(statusSecondarySuffixKey);
+                return message;
+            }
+        }
+        public EditorStatusKind StatusKind { get; private set; } = EditorStatusKind.Message;
         public IReadOnlyList<string> LocaleCodes => catalog.Codes;
         public IReadOnlyList<string> LocaleNames => catalog.Names;
         public string SelectedLocale { get; private set; } = "en";
@@ -63,7 +86,8 @@ namespace ProbablyEdited
             {
                 storageReadable = false;
                 activeSnapshotAvailable = false;
-                Report("现有预设工作区无法读取；为保护数据，已停止自动应用和保存。请修复 " + WorkspaceFile + "，或在新工作区不存在时恢复 " + LegacyActiveFile + "。", error);
+                SetStatus("status.workspace_read_failed", EditorStatusKind.Message, WorkspaceFile, LegacyActiveFile);
+                Report(error);
             }
 
             ModHook.OnModAssetsLoaded += AssetsLoaded;
@@ -112,7 +136,7 @@ namespace ProbablyEdited
             else
                 Enqueue(SelectedLocale);
 
-            Status = "已选择“" + GetPresetLabel(presetId) + "”；切换预设只改变编辑目标，不会立即应用。";
+            SetStatus("status.preset_selected", EditorStatusKind.PresetSelected, GetPresetLabel(presetId));
             StartPending();
         }
 
@@ -124,7 +148,7 @@ namespace ProbablyEdited
             else
                 Enqueue(SelectedLocale);
 
-            Status = "已新建“" + GetPresetLabel(presetId) + "”；它从当前游戏与官方模组文本基线开始，不包含其他预设的修改。";
+            SetStatus("status.preset_created", EditorStatusKind.Message, GetPresetLabel(presetId));
             StartPending();
             return presetId;
         }
@@ -142,7 +166,7 @@ namespace ProbablyEdited
                     Enqueue(SelectedLocale);
             }
 
-            Status = "已移除“" + label + "”；点击“保存并应用”后删除本地记录。";
+            SetStatus("status.preset_removed", EditorStatusKind.Message, label);
             StartPending();
         }
 
@@ -159,7 +183,7 @@ namespace ProbablyEdited
         public void RenamePreset(string presetId, string name)
         {
             workspace.RenamePreset(presetId, name);
-            Status = "已将“" + GetPresetLabel(presetId) + "”重命名；保存并应用后写入工作区。";
+            SetStatus("status.preset_renamed", EditorStatusKind.Message, GetPresetLabel(presetId));
             Changed?.Invoke();
         }
 
@@ -201,7 +225,7 @@ namespace ProbablyEdited
                 if (loadedLocales.Contains(code))
                     continue;
 
-                Status = "正在读取 " + code + " 的全部本地化表与已启用模组文本…";
+                SetStatus("status.loading_language", EditorStatusKind.Message, code);
                 Changed?.Invoke();
                 var load = catalog.Load(code);
                 while (load.MoveNext())
@@ -236,11 +260,11 @@ namespace ProbablyEdited
             else
             {
                 if (!storageReadable)
-                    Status = "现有预设工作区损坏，未覆盖它；请先修复 " + WorkspaceFile + "。";
+                    SetStatus("status.workspace_corrupt", EditorStatusKind.Message, WorkspaceFile);
                 else if (workspace.RequiresWorkspaceMigration)
-                    Status = "已读取旧版预设数据，尚未迁移到工作区格式 v3；点击“保存并应用”后写入 v3。迁移前的文件保持不变。";
+                    SetStatus("status.migration", EditorStatusKind.Message);
                 else
-                    Status = "已读取 " + State.Entries.Count + " 条文本；当前预设覆盖 " + State.OverrideCount + " 条。自建或硬编码文本不在这些数据库中。";
+                    SetStatus("status.catalog_loaded", EditorStatusKind.CatalogReady, State.Entries.Count, State.OverrideCount);
             }
 
             log.Log("CATALOG locale=" + SelectedLocale + " entries=" + State.Entries.Count + " overrides=" + State.OverrideCount);
@@ -264,11 +288,13 @@ namespace ProbablyEdited
                     if (pendingApply != null)
                     {
                         pendingApply = null;
-                        Report("预加载所需语言失败；本次保存未开始，草稿仍保留：" + error.Message, error);
+                        SetStatus("status.preload_failed", EditorStatusKind.Message, error.Message);
+                        Report(error);
                     }
                     else
                     {
-                        Report("读取文本失败：" + error.Message, error);
+                        SetStatus("status.read_failed", EditorStatusKind.Message, error.Message);
+                        Report(error);
                     }
 
                     yield break;
@@ -286,19 +312,19 @@ namespace ProbablyEdited
         {
             if (!storageReadable)
             {
-                Status = "为保护已有数据，不能覆盖损坏的预设工作区；请先修复 " + WorkspaceFile + "。";
+                SetStatus("status.protect_workspace", EditorStatusKind.Message, WorkspaceFile);
                 Changed?.Invoke();
                 return;
             }
             if (!runtimeConsistent)
             {
-                Status = "运行时文本状态无法确认；请重启游戏后再保存并应用。";
+                SetStatus("status.runtime_state_unknown", EditorStatusKind.Message);
                 Changed?.Invoke();
                 return;
             }
             if (pendingApply != null)
             {
-                Status = "正在准备保存并应用，请等待当前操作完成。";
+                SetStatus("status.apply_pending", EditorStatusKind.Message);
                 Changed?.Invoke();
                 return;
             }
@@ -327,7 +353,7 @@ namespace ProbablyEdited
                 return;
             }
 
-            Status = "正在加载所选预设与当前已应用预设涉及的全部语言，完成后再保存并应用…";
+            SetStatus("status.loading_apply_languages", EditorStatusKind.Message);
             StartPending();
         }
 
@@ -353,7 +379,7 @@ namespace ProbablyEdited
                 !AreEqual(workspace.ActiveOverrides, apply.PreviousOverrides))
             {
                 pendingApply = null;
-                Status = "预加载期间预设草稿发生变化；没有保存或应用，请提交后重新保存。";
+                SetStatus("status.draft_changed_during_preload", EditorStatusKind.Message);
                 Changed?.Invoke();
                 return;
             }
@@ -408,20 +434,21 @@ namespace ProbablyEdited
                 }
 
                 pendingApply = null;
-                string message = "保存并应用未完成，草稿仍保留：" + error.Message;
+                SetStatus("status.apply_failed", EditorStatusKind.Message, error.Message);
                 if (diskRollbackFailed)
-                    message += " 磁盘工作区恢复失败，请从 presets.previous.json 恢复；后续保存已停用。";
+                    AppendStatus("status.disk_rollback_failed");
                 else if (!storageReadable)
-                    message += " 工作区无法安全读取，后续保存已停用。";
+                    AppendStatus("status.storage_read_disabled");
                 if (runtimeRollbackFailed)
-                    message += " 运行时回滚失败，请重启游戏后再操作。";
-                Report(message, error);
+                    AppendStatus("status.runtime_rollback_failed");
+                Report(error);
                 return;
             }
 
             workspace.MarkSavedAndApplied();
             pendingApply = null;
-            Status = "已保存并应用“" + GetPresetLabel(workspace.ActivePresetId) + "”：覆盖 " + workspace.State.OverrideCount + " 条。缓存文字可能需重开对应界面；未安装模组的条目会保留。";
+            SetStatus("status.saved_and_applied", EditorStatusKind.Message,
+                GetPresetLabel(workspace.ActivePresetId), workspace.State.OverrideCount);
             log.Log("SAVED preset=" + workspace.ActivePresetId + " overrides=" + workspace.State.OverrideCount + " applied=" + applied + " locale=" + SelectedLocale);
             Changed?.Invoke();
         }
@@ -452,7 +479,7 @@ namespace ProbablyEdited
 
         public void NotifyEdited()
         {
-            Status = workspace.HasUnsavedChanges ? "有未保存修改；点击“保存并应用”后生效。" : "当前修改已保存。";
+            SetStatus(workspace.HasUnsavedChanges ? "status.unsaved" : "status.saved", EditorStatusKind.Message);
             Changed?.Invoke();
         }
 
@@ -477,9 +504,9 @@ namespace ProbablyEdited
         public PresetImportPreview PreviewImport(string relativeFile, string targetPresetId)
         {
             if (IsPrivateFile(relativeFile))
-                throw new InvalidOperationException("请选择分享文件，不要选择编辑器内部存储。");
+                throw new InvalidOperationException(UiText.Get("status.import_file_private"));
             if (!ModHelper.ModDataFileExists(ModEntry.ModId, relativeFile))
-                throw new InvalidOperationException("文件已不存在，请刷新文件列表。");
+                throw new InvalidOperationException(UiText.Get("status.import_file_missing"));
 
             return workspace.PreviewImport(
                 ModHelper.ReadModDataFileText(ModEntry.ModId, relativeFile),
@@ -495,7 +522,7 @@ namespace ProbablyEdited
             else
                 Enqueue(SelectedLocale);
 
-            Status = "修改文件已合并到“" + GetPresetLabel(workspace.SelectedPresetId) + "”草稿；检查后点击“保存并应用”。";
+            SetStatus("status.import_merged", EditorStatusKind.Message, GetPresetLabel(workspace.SelectedPresetId));
             StartPending();
         }
 
@@ -505,21 +532,22 @@ namespace ProbablyEdited
             if (name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                 name = name.Substring(0, name.Length - 5);
             if (name.Length == 0 || name.Length > 80 || name == "." || name == ".." || name.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }) >= 0)
-                throw new InvalidOperationException("文件名须为 1–80 个字符，不能包含路径或 Windows 文件名保留字符。");
+                throw new InvalidOperationException(UiText.Get("status.export_filename_invalid"));
             foreach (char character in name)
             {
                 if (char.IsControl(character))
-                    throw new InvalidOperationException("文件名不能包含控制字符。");
+                    throw new InvalidOperationException(UiText.Get("status.export_control_characters"));
             }
 
             string relative = "exports/" + name + ".json";
             if (ModHelper.ModDataFileExists(ModEntry.ModId, relative))
-                throw new InvalidOperationException("同名分享文件已存在，请换一个文件名以保留原文件。");
+                throw new InvalidOperationException(UiText.Get("status.export_file_exists"));
 
             string json = workspace.ExportPresetJson(presetId, GameVersion);
             ModHelper.WriteModDataFileText(ModEntry.ModId, relative, json);
             PresetStatistics stats = workspace.GetPresetStatistics(presetId);
-            Status = "已导出“" + GetPresetLabel(presetId) + "”：修改 " + stats.OverrideCount + " 条、语言 " + stats.LanguageCount + " 种、来源 " + stats.SourceCount + " 个；" + DataFolder + "/" + relative;
+            SetStatus("status.exported", EditorStatusKind.Message,
+                GetPresetLabel(presetId), stats.OverrideCount, stats.LanguageCount, stats.SourceCount, DataFolder + "/" + relative);
             log.Log("EXPORTED preset=" + presetId + " file=" + relative + " overrides=" + stats.OverrideCount);
             Changed?.Invoke();
         }
@@ -527,11 +555,11 @@ namespace ProbablyEdited
         public IReadOnlyList<string> ValidateEdit(TextEntry entry, string text)
         {
             var warnings = new List<string>();
-            if (text == null) { warnings.Add("替换文本不能为 null；空字符串可以用于清空文本。"); return warnings; }
+            if (text == null) { warnings.Add(UiText.Get("status.validation.text_null")); return warnings; }
             if (!Tokens(entry.OriginalText, Placeholder).SetEquals(Tokens(text, Placeholder)))
-                warnings.Add("占位变量发生变化；这可能导致缺少游戏数值、名字或格式化错误。");
+                warnings.Add(UiText.Get("status.validation.placeholders"));
             if (!Tokens(entry.OriginalText, Tag).SetEquals(Tokens(text, Tag)))
-                warnings.Add("富文本标签发生变化；请确认标签仍成对、拼写正确。");
+                warnings.Add(UiText.Get("status.validation.rich_text"));
             int depth = 0;
             bool bad = false;
             for (int i = 0; i < text.Length; i++)
@@ -541,7 +569,7 @@ namespace ProbablyEdited
                 if (c == '{') depth++;
                 if (c == '}' && --depth < 0) { bad = true; break; }
             }
-            if (depth != 0 || bad) warnings.Add("花括号似乎不匹配；游戏格式化时可能无法显示此文本。");
+            if (depth != 0 || bad) warnings.Add(UiText.Get("status.validation.braces"));
             return warnings;
         }
 
@@ -618,10 +646,26 @@ namespace ProbablyEdited
             LoadLocale(GameTextCatalog.Canonical(locale.Identifier.Code));
         }
 
-        private void Report(string message, Exception error)
+        private void SetStatus(string key, EditorStatusKind kind, params object[] arguments)
         {
-            Status = message;
-            log.Error(message + "\n" + error);
+            statusKey = key;
+            statusArguments = arguments ?? Array.Empty<object>();
+            statusSuffixKey = null;
+            statusSecondarySuffixKey = null;
+            StatusKind = kind;
+        }
+
+        private void AppendStatus(string key)
+        {
+            if (statusSuffixKey == null)
+                statusSuffixKey = key;
+            else
+                statusSecondarySuffixKey = key;
+        }
+
+        private void Report(Exception error)
+        {
+            log.Error(Status + "\n" + error);
             Changed?.Invoke();
         }
 

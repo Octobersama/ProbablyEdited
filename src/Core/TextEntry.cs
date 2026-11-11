@@ -28,7 +28,7 @@ namespace ProbablyEdited
             string description)
         {
             if (!id.IsValid)
-                throw new ArgumentException("文本条目标识不能为空。", nameof(id));
+                throw new ArgumentException(UiText.Get("core.text_entry.invalid_id"), nameof(id));
 
             Id = id;
             SourceName = sourceName ?? string.Empty;

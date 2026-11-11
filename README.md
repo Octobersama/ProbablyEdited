@@ -8,9 +8,18 @@
 
 推荐搭配[游戏内模组设置 / In-Game Mod Settings](https://steamcommunity.com/sharedfiles/filedetails/?id=3834556946)：可从游玩中的原生“选项”进入模组设置。manifest 已列出其 ID `asteroid_in_game_mod_settings` 以提示安装；未安装也能从主菜单独立使用，不引用它的程序集，Steam 不会自动订阅。
 
-1. 选择预设，首次使用默认为 **预设01**。预设按名称选择，不设固定槽位，最多可保留 **36** 个。**新建预设**使用当前游戏与合规模组的原文基线，不复制其他预设的个人修改；名称可以修改，改名不影响其身份或内容。
+### 界面语言
+
+在游戏的 **选项 → Probably Edited · 界面 → 模组界面语言** 中选择语言并点击应用。默认 **跟随游戏语言**；选择保存在本模组独立的全局偏好中，重新打开模组窗口时生效，不会切换游戏语言、改变正在编辑的文本语言或自动提交输入。
+
+界面提供简体中文、正體中文（臺灣）、英语、法语、德语、俄语、日语、西班牙语、巴西葡萄牙语、韩语、意大利语和波兰语。翻译位于 `Localization/<locale>.csv`，由游戏官方模组本地化加载器载入，编辑器来源列表可识别本模组自己的字典。添加 UI 专用语言时，增加同格式 CSV 并设置 `meta.native_name` 为母语名；不要求游戏本身提供该语言。缺少的翻译回退英语。
+
+### 编辑文本
+
+1. 选择预设，新预设使用当前界面语言的默认名称（简体中文为 **预设01**）。预设按名称选择，不设固定槽位，最多可保留 **36** 个。**新建预设**使用当前游戏与合规模组的原文基线，不复制其他预设的个人修改；名称可以修改，改名不影响其身份或内容。已有名称不会随界面语言更改。
 2. 选择要编辑的语言。列表只取游戏原生语言选择器实际提供的选项，以母语显示、不附代码；不会因为资源包或模组字典里存在额外语言就列出。这里只改变编辑器查看的语言，不切换游戏语言。旧预设中未列出的语言修改仍保留。
 3. 在 **文本条目**区域选分类，悬停右侧原版圆形信息图标查看说明。列表默认每页 **100** 条，可选 **30 / 50 / 100 / 200 / 500**，支持鼠标滚轮。当前条目保持高亮；前缀 `*` 表示该条有尚未暂存的输入。
+   搜索无匹配时列表显示 **无结果**；输入框有内容时，点击右端的 **×** 清空，清空操作也可以撤销。
 4. 对照原文编辑替换文本：CJK 文本按字、字母和数字按词计算差异。删除片段仅用**红底**标记，新增片段用**绿底**标记；标记不写入文本，不影响复制或分享。表名、键、版本和格式信息集中在 **详细信息**窗口。
 5. 点击 **暂存此条**保留当前输入，再点击 **保存并应用**：保存所有预设的草稿，但只让当前选中的一个预设在游戏中生效。切换生效预设时会恢复旧覆盖，再应用新覆盖。
 6. **恢复原文**移除当前条目在所选预设中的覆盖；再次保存后恢复游戏原有翻译或回退规则。
@@ -21,6 +30,8 @@
 空字符串会作为有效修改保存；本体文本启用 Unity 语言回退时，空值会触发回退，因此“留空”不等于强制隐藏文字。本模组保留游戏原有的回退行为。
 
 在替换文本、预设名称、搜索词和导出文件名等输入框右键，可使用 **全选 / 复制 / 粘贴 / 撤销 / 重做**。只读原文和预览支持全选、复制，编辑操作显示为不可用。撤销历史按输入框与编辑对象隔离，切换条目或预设后不会撤销另一个对象的内容；菜单操作不会代替“暂存此条”“保存名称”或“导出 JSON”。
+
+所有可编辑文本框共用连续多步撤销/重做：Windows/Linux 使用 **Ctrl+Z** 撤销、**Ctrl+Y** 或 **Ctrl+Shift+Z** 重做；macOS 使用 **Command+Z** 和 **Command+Shift+Z**。输入法组字期间不接管这些快捷键，右键菜单不额外调暗背景。
 
 ## 分享与导入
 
@@ -61,6 +72,7 @@ dotnet run --project tests/ProbablyEdited.CoreChecks -c Release
 dotnet run --project tests/ProbablyEdited.ControllerChecks -c Release
 dotnet run --project tests/ProbablyEdited.PresetChecks -c Release
 dotnet run --project tests/ProbablyEdited.DiffChecks -c Release
+dotnet run --project tests/ProbablyEdited.LocalizationChecks -c Release
 ```
 
 非默认安装位置可给这些命令附加：
@@ -69,7 +81,7 @@ dotnet run --project tests/ProbablyEdited.DiffChecks -c Release
 -p:GameDirectory="D:\SteamLibrary\steamapps\common\Probably Stolen"
 ```
 
-构建自动产生 `dist/ProbablyEdited/ProbablyEdited.dll`、`manifest.xml`、`LICENSE` 和 `NOTICE`。游戏程序集仅用于引用，不复制进分发目录。
+构建自动产生 `dist/ProbablyEdited/ProbablyEdited.dll`、`manifest.xml`、`LICENSE`、`NOTICE` 和 `Localization/` 语言文件。安装时复制整个目录，不要遗漏 CSV。游戏程序集仅用于引用，不复制进分发目录。
 
 实现分工：`src/Core/` 负责文本状态、预设工作区、分享协议和差异范围；`GameTextCatalog.cs` 负责原文目录与运行时覆盖；`EditorController.cs` 负责持久化和应用；`EditorWindow.cs`、`src/UI/` 负责界面、高亮和悬停；`ModEntry.cs` 负责生命周期及仅命中本模组的设置入口补丁。
 

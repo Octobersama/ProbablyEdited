@@ -29,63 +29,192 @@ namespace ProbablyEdited
             if (!string.IsNullOrWhiteSpace(authoredName))
                 return authoredName.Trim();
 
-            return string.IsNullOrWhiteSpace(code) ? "未知语言" : code;
+            return string.IsNullOrWhiteSpace(code) ? UiText.Get("catalog.locale.unknown") : code;
+        }
+
+        public static string SourceName(TextEntry entry)
+        {
+            if (entry == null)
+                return string.Empty;
+
+            return StringComparer.Ordinal.Equals(entry.Id.SourceId, "game")
+                ? UiText.Get("catalog.source.game_tables")
+                : entry.SourceName;
+        }
+
+        public static string CategoryLabel(string category)
+        {
+            if (string.IsNullOrWhiteSpace(category))
+                return UiText.Get("editor.detail.uncategorized");
+
+            switch (category)
+            {
+                case "ClientName": return UiText.Get("category.client_name.label");
+                case "Dialogue": return UiText.Get("category.dialogue.label");
+                case "PhoneDialogue": return UiText.Get("category.phone_dialogue.label");
+                case "Item": return UiText.Get("category.item.label");
+                case "Interactable": return UiText.Get("category.interactable.label");
+                case "Hint": return UiText.Get("category.hint.label");
+                case "MainMenu": return UiText.Get("category.main_menu.label");
+                case "UI": return UiText.Get("category.ui.label");
+                case "Mechanic": return UiText.Get("category.mechanic.label");
+                case "NetworkUpgrade": return UiText.Get("category.network_upgrade.label");
+                case "NewGame": return UiText.Get("category.new_game.label");
+                case "PerkTable": return UiText.Get("category.perk.label");
+                case "RepPerkTable": return UiText.Get("category.rep_perk.label");
+                case "Tutorial": return UiText.Get("category.tutorial.label");
+                case "mod-localization": return UiText.Get("category.mod_localization.label");
+                default:
+                    return UiText.Format("category.unknown.label", UnknownTableName(category));
+            }
         }
 
         public static string CategoryDescription(string category)
         {
             if (string.IsNullOrWhiteSpace(category))
-                return "全部分类：显示当前语言目录中的所有文本表条目。";
+                return UiText.Get("category.all.description");
 
             switch (category)
             {
-                case "顾客 / 姓名":
-                case "ClientName":
-                    return "顾客姓名与称呼，来源于 ClientName 字符串表。";
-                case "顾客 / 对话":
-                case "Dialogue":
-                    return "顾客交谈、报价等对白，来源于 Dialogue 字符串表。";
-                case "电话 / 对话":
-                case "PhoneDialogue":
-                    return "电话中的对话文本，来源于 PhoneDialogue 字符串表。";
-                case "物品":
-                case "Item":
-                    return "物品名称、描述等内容，来源于 Item 字符串表。";
-                case "场景 / 交互":
-                case "Interactable":
-                    return "场景对象名称及交互提示，来源于 Interactable 字符串表。";
-                case "提示":
-                case "Hint":
-                    return "游戏中的提示文本，来源于 Hint 字符串表。";
-                case "界面 / 主菜单":
-                case "MainMenu":
-                    return "主菜单的按钮、标签和说明，来源于 MainMenu 字符串表。";
-                case "界面 / 游戏界面":
-                case "UI":
-                    return "游戏界面的标签、按钮和消息，来源于 UI 字符串表。";
-                case "经营 / 机制":
-                case "Mechanic":
-                    return "经营与游戏机制相关文本，来源于 Mechanic 字符串表。";
-                case "成长 / 人脉升级":
-                case "NetworkUpgrade":
-                    return "人脉网络升级相关文本，来源于 NetworkUpgrade 字符串表。";
-                case "新游戏":
-                case "NewGame":
-                    return "新游戏流程相关文本，来源于 NewGame 字符串表。";
-                case "成长 / 专长":
-                case "PerkTable":
-                    return "角色专长相关文本，来源于 PerkTable 字符串表。";
-                case "成长 / 声望专长":
-                case "RepPerkTable":
-                    return "声望专长相关文本，来源于 RepPerkTable 字符串表。";
-                case "教程":
-                case "Tutorial":
-                    return "教程与操作引导文本，来源于 Tutorial 字符串表。";
-                case "模组文本":
-                    return "已启用模组通过官方 Localization 字典提供的文本条目；来源属于模组文本，而非原始游戏字符串表。";
+                case "ClientName": return UiText.Get("category.client_name.description");
+                case "Dialogue": return UiText.Get("category.dialogue.description");
+                case "PhoneDialogue": return UiText.Get("category.phone_dialogue.description");
+                case "Item": return UiText.Get("category.item.description");
+                case "Interactable": return UiText.Get("category.interactable.description");
+                case "Hint": return UiText.Get("category.hint.description");
+                case "MainMenu": return UiText.Get("category.main_menu.description");
+                case "UI": return UiText.Get("category.ui.description");
+                case "Mechanic": return UiText.Get("category.mechanic.description");
+                case "NetworkUpgrade": return UiText.Get("category.network_upgrade.description");
+                case "NewGame": return UiText.Get("category.new_game.description");
+                case "PerkTable": return UiText.Get("category.perk.description");
+                case "RepPerkTable": return UiText.Get("category.rep_perk.description");
+                case "Tutorial": return UiText.Get("category.tutorial.description");
+                case "mod-localization": return UiText.Get("category.mod_localization.description");
                 default:
-                    return "这是原始字符串表中的未识别分类“" + category + "”。当前目录按该表名保留条目；请结合键名和原文判断具体用途。";
+                    return UiText.Format("category.unknown.description", UnknownTableName(category));
             }
+        }
+
+        public static bool CategoryContains(string category, string query)
+        {
+            if (string.IsNullOrWhiteSpace(category))
+                return ContainsIgnoreCase(UiText.Get("editor.detail.uncategorized"), query);
+            if (IsKnownCategory(category))
+                return ContainsIgnoreCase(CategoryLabel(category), query);
+
+            return ContainsTemplateParts(UiText.Get("category.unknown.label"), query)
+                || ContainsIgnoreCase(category, query);
+        }
+
+        public static bool EntryDescriptionContains(TextEntry entry, string query)
+        {
+            if (entry == null)
+                return false;
+
+            if (StringComparer.Ordinal.Equals(entry.Id.SourceId, "game"))
+            {
+                return CategoryDescriptionContains(entry.Category, query)
+                    || entry.IsFallback && ContainsIgnoreCase(UiText.Get("catalog.detail.game_fallback"), query)
+                    || entry.IsSmart && ContainsIgnoreCase(UiText.Get("catalog.detail.game_smart"), query)
+                    || ContainsIgnoreCase(UiText.Get("catalog.detail.game_source"), query);
+            }
+
+            if (StringComparer.Ordinal.Equals(entry.Id.TableId, "Localization"))
+            {
+                return ContainsIgnoreCase(UiText.Get("catalog.detail.mod_usage"), query)
+                    || entry.IsFallback && ContainsIgnoreCase(UiText.Get("catalog.detail.mod_fallback"), query);
+            }
+
+            return ContainsIgnoreCase(entry.Description, query);
+        }
+
+        private static bool CategoryDescriptionContains(string category, string query)
+        {
+            if (string.IsNullOrWhiteSpace(category))
+                return ContainsIgnoreCase(UiText.Get("category.all.description"), query);
+            if (IsKnownCategory(category))
+                return ContainsIgnoreCase(CategoryDescription(category), query);
+
+            return ContainsTemplateParts(UiText.Get("category.unknown.description"), query)
+                || ContainsIgnoreCase(category, query);
+        }
+
+        private static bool IsKnownCategory(string category)
+        {
+            switch (category)
+            {
+                case "ClientName":
+                case "Dialogue":
+                case "PhoneDialogue":
+                case "Item":
+                case "Interactable":
+                case "Hint":
+                case "MainMenu":
+                case "UI":
+                case "Mechanic":
+                case "NetworkUpgrade":
+                case "NewGame":
+                case "PerkTable":
+                case "RepPerkTable":
+                case "Tutorial":
+                case "mod-localization":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool ContainsTemplateParts(string template, string query)
+        {
+            int placeholder = template.IndexOf("{0}", StringComparison.Ordinal);
+            if (placeholder < 0)
+                return ContainsIgnoreCase(template, query);
+
+            return template.IndexOf(query, 0, placeholder, StringComparison.OrdinalIgnoreCase) >= 0
+                || template.IndexOf(query, placeholder + 3, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool ContainsIgnoreCase(string text, string query)
+        {
+            return !string.IsNullOrEmpty(text)
+                && text.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        public static string EntryDescription(TextEntry entry)
+        {
+            if (entry == null)
+                return string.Empty;
+
+            if (StringComparer.Ordinal.Equals(entry.Id.SourceId, "game"))
+            {
+                string description = UiText.Format("catalog.detail.game_base",
+                    entry.TableName, entry.KeyName, entry.Id.Key, CategoryDescription(entry.Category));
+                if (entry.IsFallback)
+                    description += "\n" + UiText.Get("catalog.detail.game_fallback");
+                if (entry.IsSmart)
+                    description += "\n" + UiText.Get("catalog.detail.game_smart");
+                return description + "\n" + UiText.Get("catalog.detail.game_source");
+            }
+
+            if (StringComparer.Ordinal.Equals(entry.Id.TableId, "Localization"))
+            {
+                string description = UiText.Format("catalog.detail.mod_base",
+                    SourceName(entry), entry.Id.SourceId, entry.SourceVersion, entry.KeyName);
+                description += "\n" + UiText.Format("catalog.detail.mod_usage");
+                if (entry.IsFallback)
+                    description += "\n" + UiText.Get("catalog.detail.mod_fallback");
+                return description;
+            }
+
+            return entry.Description ?? string.Empty;
+        }
+
+        private static string UnknownTableName(string category)
+        {
+            return category != null && category.StartsWith("table:", StringComparison.Ordinal)
+                ? category.Substring("table:".Length)
+                : category;
         }
 
         private static string NormalizeLocaleForLookup(string code)

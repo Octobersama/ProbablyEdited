@@ -52,6 +52,7 @@ namespace ProbablyEdited
                 return;
             }
 
+            // Text-identical callbacks only update selection; they must not discard redo history.
             if (string.Equals(_snapshots[_currentIndex].Text, text, StringComparison.Ordinal))
             {
                 UpdateCurrentSelection(anchorPosition, focusPosition);

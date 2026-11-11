@@ -56,7 +56,7 @@ namespace ProbablyEdited
         public void SetCatalog(IReadOnlyList<TextEntry> entries)
         {
             if (entries == null)
-                throw new ArgumentNullException(nameof(entries), "目录不能为空。");
+                throw new ArgumentNullException(nameof(entries), UiText.Get("core.catalog.null"));
 
             var copiedEntries = new TextEntry[entries.Count];
             var catalogIds = new HashSet<TextId>();
@@ -66,15 +66,15 @@ namespace ProbablyEdited
             {
                 TextEntry entry = entries[index];
                 if (entry == null)
-                    throw new ArgumentException($"目录第 {index + 1} 项为空，无法载入。", nameof(entries));
+                    throw new ArgumentException(UiText.Format("core.catalog.null_entry", index + 1), nameof(entries));
                 if (!entry.Id.IsValid)
-                    throw new ArgumentException($"目录第 {index + 1} 项的标识无效。", nameof(entries));
+                    throw new ArgumentException(UiText.Format("core.catalog.invalid_entry_id", index + 1), nameof(entries));
                 if (locale == null)
                     locale = entry.Id.Locale;
                 else if (!StringComparer.Ordinal.Equals(locale, entry.Id.Locale))
-                    throw new ArgumentException("目录必须只包含当前选中语言的条目。", nameof(entries));
+                    throw new ArgumentException(UiText.Get("core.catalog.locale_mismatch"), nameof(entries));
                 if (!catalogIds.Add(entry.Id))
-                    throw new ArgumentException($"目录中存在重复文本标识：第 {index + 1} 项。", nameof(entries));
+                    throw new ArgumentException(UiText.Format("core.catalog.duplicate_entry", index + 1), nameof(entries));
 
                 copiedEntries[index] = entry;
             }
@@ -101,7 +101,7 @@ namespace ProbablyEdited
         {
             RequireEntry(entry);
             if (text == null)
-                throw new ArgumentNullException(nameof(text), "替换文本不能为空引用；如需清空文本，请传入空字符串。");
+                throw new ArgumentNullException(nameof(text), UiText.Get("core.edit.text_null"));
 
             if (StringComparer.Ordinal.Equals(text, entry.OriginalText))
             {
@@ -149,11 +149,11 @@ namespace ProbablyEdited
             foreach (KeyValuePair<TextId, string> pair in overrides)
             {
                 if (!pair.Key.IsValid)
-                    throw new FormatException("工作区包含无效文本标识。");
+                    throw new FormatException(UiText.Get("core.workspace.invalid_text_id"));
                 if (pair.Value == null)
-                    throw new FormatException("工作区替换文本不能为 null。");
+                    throw new FormatException(UiText.Get("core.workspace.text_null"));
                 if (loadedOverrides.ContainsKey(pair.Key))
-                    throw new FormatException("工作区包含重复文本标识。");
+                    throw new FormatException(UiText.Get("core.workspace.duplicate_text_id"));
                 loadedOverrides.Add(pair.Key, pair.Value);
             }
 
@@ -169,7 +169,7 @@ namespace ProbablyEdited
         internal string ExportPresetJson(string gameVersion, string presetName)
         {
             if (string.IsNullOrWhiteSpace(presetName))
-                throw new ArgumentException("预设名称不能为空。", nameof(presetName));
+                throw new ArgumentException(UiText.Get("core.export.name_empty"), nameof(presetName));
 
             return ExportJson(gameVersion, PresetSchemaVersion, presetName);
         }
@@ -177,7 +177,7 @@ namespace ProbablyEdited
         private string ExportJson(string gameVersion, int schemaVersion, string presetName)
         {
             if (gameVersion == null)
-                throw new ArgumentException("游戏版本不能为空，无法写入补丁兼容性信息。", nameof(gameVersion));
+                throw new ArgumentException(UiText.Get("core.export.game_version_null"), nameof(gameVersion));
 
             var orderedOverrides = new List<KeyValuePair<TextId, string>>(_overrides);
             orderedOverrides.Sort(CompareOverrides);
@@ -257,14 +257,14 @@ namespace ProbablyEdited
             var warnings = new List<string>();
 
             if (gameVersion == null)
-                warnings.Add("当前游戏版本未知，无法检查补丁版本兼容性。");
+                warnings.Add(UiText.Get("import.warning.game_unknown"));
             else if (!StringComparer.Ordinal.Equals(document.GameVersion, gameVersion))
-                warnings.Add($"补丁版本 {document.GameVersion} 与当前游戏版本 {gameVersion} 不同；请核对后再应用。");
+                warnings.Add(UiText.Format("import.warning.game_mismatch", document.GameVersion, gameVersion));
 
             if (unavailableCount > 0)
-                warnings.Add($"当前语言目录中有 {unavailableCount} 项暂不可用；这些覆盖仍会保留，不会按缺失项删除。");
+                warnings.Add(UiText.Format("import.warning.unavailable_count", unavailableCount));
             if (conflictCount > 0)
-                warnings.Add($"有 {conflictCount} 项与本地覆盖不同；不选择覆盖冲突时将保留本地值。");
+                warnings.Add(UiText.Format("import.warning.conflict", conflictCount));
 
             return new ImportPlan(
                 document.Overrides,
@@ -297,11 +297,11 @@ namespace ProbablyEdited
         internal void ValidateImportPlan(ImportPlan plan)
         {
             if (plan == null)
-                throw new ArgumentNullException(nameof(plan), "导入预览不能为空；请先预览补丁文件。");
+                throw new ArgumentNullException(nameof(plan), UiText.Get("core.import.preview_null"));
             if (!ReferenceEquals(plan.StateMarker, _stateMarker))
-                throw new InvalidOperationException("此导入预览不属于当前编辑状态，请重新预览补丁文件。");
+                throw new InvalidOperationException(UiText.Get("core.import.preview_wrong_state"));
             if (plan.StateRevision != _stateRevision)
-                throw new InvalidOperationException("预览后目录或本地草稿已变化，请重新预览补丁文件后再导入。");
+                throw new InvalidOperationException(UiText.Get("core.import.preview_changed"));
         }
 
 
@@ -313,7 +313,7 @@ namespace ProbablyEdited
         private static PatchDocument ParseDocument(string json)
         {
             if (json == null)
-                throw new FormatException("补丁内容为空；请选择有效的 JSON 补丁文件。");
+                throw new FormatException(UiText.Get("core.patch.empty"));
 
             JToken token;
             try
@@ -325,9 +325,9 @@ namespace ProbablyEdited
                     reader.SupportMultipleContent = true;
 
                     if (!reader.Read())
-                        throw new FormatException("补丁内容为空；请选择有效的 JSON 补丁文件。");
+                        throw new FormatException(UiText.Get("core.patch.empty"));
                     if (reader.TokenType == JsonToken.Comment)
-                        throw new FormatException("补丁必须是标准 JSON，不能包含注释。");
+                        throw new FormatException(UiText.Get("core.patch.standard_json"));
 
                     token = JToken.ReadFrom(reader, new JsonLoadSettings
                     {
@@ -336,37 +336,37 @@ namespace ProbablyEdited
                     });
 
                     if (reader.Read())
-                        throw new FormatException("补丁 JSON 后存在多余内容，请删除额外内容后重试。");
+                        throw new FormatException(UiText.Get("core.patch.trailing_content"));
                 }
             }
             catch (JsonException exception)
             {
-                throw new FormatException("补丁 JSON 格式无效，请检查文件语法或重复字段后重试。详情：" + exception.Message, exception);
+                throw new FormatException(UiText.Format("core.patch.invalid_json", exception.Message), exception);
             }
 
             if (ContainsComment(token))
-                throw new FormatException("补丁必须是标准 JSON，不能包含注释。");
+                throw new FormatException(UiText.Get("core.patch.standard_json"));
             if (!(token is JObject root))
-                throw new FormatException("补丁根节点必须是 JSON 对象。");
+                throw new FormatException(UiText.Get("core.patch.root_object"));
 
-            string schema = RequireString(root, "schema", "补丁", false);
+            string schema = RequireString(root, "schema", UiText.Get("core.context.patch"), false);
             if (!StringComparer.Ordinal.Equals(schema, SchemaName))
-                throw new NotSupportedException($"不支持补丁格式“{schema}”；请使用 {SchemaName} 格式。");
+                throw new NotSupportedException(UiText.Format("core.patch.unsupported_schema", schema, SchemaName));
 
             JToken versionToken = root["schemaVersion"];
             if (versionToken == null || versionToken.Type != JTokenType.Integer)
-                throw new FormatException("补丁字段 schemaVersion 必须是整数。");
+                throw new FormatException(UiText.Get("core.patch.version_integer"));
             string version = Convert.ToString(((JValue)versionToken).Value, CultureInfo.InvariantCulture);
             bool isPresetVersion = StringComparer.Ordinal.Equals(version, PresetSchemaVersion.ToString(CultureInfo.InvariantCulture));
             if (!isPresetVersion && !StringComparer.Ordinal.Equals(version, SchemaVersion.ToString(CultureInfo.InvariantCulture)))
-                throw new NotSupportedException($"不支持补丁版本 {version}；当前支持 schemaVersion {SchemaVersion} 和 {PresetSchemaVersion}。");
+                throw new NotSupportedException(UiText.Format("core.patch.unsupported_version", version, SchemaVersion, PresetSchemaVersion));
 
-            RequireExactProperties(root, isPresetVersion ? PresetDocumentProperties : DocumentProperties, "补丁");
-            string gameVersion = RequireString(root, "gameVersion", "补丁", true);
-            string presetName = isPresetVersion ? RequireString(root, "presetName", "补丁", false) : null;
+            RequireExactProperties(root, isPresetVersion ? PresetDocumentProperties : DocumentProperties, UiText.Get("core.context.patch"));
+            string gameVersion = RequireString(root, "gameVersion", UiText.Get("core.context.patch"), true);
+            string presetName = isPresetVersion ? RequireString(root, "presetName", UiText.Get("core.context.patch"), false) : null;
             JToken overridesToken = root["overrides"];
             if (overridesToken.Type != JTokenType.Array)
-                throw new FormatException("补丁字段 overrides 必须是数组。");
+                throw new FormatException(UiText.Get("core.patch.overrides_array"));
 
             var overrides = new Dictionary<TextId, string>();
             int index = 0;
@@ -374,18 +374,19 @@ namespace ProbablyEdited
             {
                 index++;
                 if (!(item is JObject overrideObject))
-                    throw new FormatException($"补丁 overrides 第 {index} 项必须是 JSON 对象。");
+                    throw new FormatException(UiText.Format("core.patch.override_object", index));
 
-                RequireExactProperties(overrideObject, OverrideProperties, $"补丁 overrides 第 {index} 项");
-                string sourceId = RequireString(overrideObject, "sourceId", $"第 {index} 项", false);
-                string locale = RequireString(overrideObject, "locale", $"第 {index} 项", false);
-                string tableId = RequireString(overrideObject, "tableId", $"第 {index} 项", false);
-                string key = RequireString(overrideObject, "key", $"第 {index} 项", false);
-                string text = RequireString(overrideObject, "text", $"第 {index} 项", true);
+                string overrideContext = UiText.Format("core.overrides.item_context", UiText.Get("core.context.patch") + " overrides", index);
+                RequireExactProperties(overrideObject, OverrideProperties, overrideContext);
+                string sourceId = RequireString(overrideObject, "sourceId", overrideContext, false);
+                string locale = RequireString(overrideObject, "locale", overrideContext, false);
+                string tableId = RequireString(overrideObject, "tableId", overrideContext, false);
+                string key = RequireString(overrideObject, "key", overrideContext, false);
+                string text = RequireString(overrideObject, "text", overrideContext, true);
                 var id = new TextId(sourceId, locale, tableId, key);
 
                 if (overrides.ContainsKey(id))
-                    throw new FormatException($"补丁 overrides 第 {index} 项的文本标识重复；请删除重复项后重试。");
+                    throw new FormatException(UiText.Format("core.patch.duplicate_override", index));
 
                 overrides.Add(id, text);
             }
@@ -408,13 +409,13 @@ namespace ProbablyEdited
                 }
 
                 if (!found)
-                    throw new FormatException($"{context}包含不支持的字段“{property.Name}”。");
+                    throw new FormatException(UiText.Format("core.json.unsupported_field", context, property.Name));
             }
 
             for (int index = 0; index < expected.Length; index++)
             {
                 if (value.Property(expected[index]) == null)
-                    throw new FormatException($"{context}缺少必需字段“{expected[index]}”。");
+                    throw new FormatException(UiText.Format("core.json.missing_field", context, expected[index]));
             }
         }
 
@@ -422,11 +423,11 @@ namespace ProbablyEdited
         {
             JToken token = value[propertyName];
             if (token == null || token.Type != JTokenType.String)
-                throw new FormatException($"{context}字段“{propertyName}”必须是 JSON 字符串，不能为 null。");
+                throw new FormatException(UiText.Format("core.json.string_type", context, propertyName));
 
             string text = token.Value<string>();
             if (text == null || (!allowEmpty && string.IsNullOrWhiteSpace(text)))
-                throw new FormatException($"{context}字段“{propertyName}”不能为空。");
+                throw new FormatException(UiText.Format("core.json.string_empty", context, propertyName));
 
             return text;
         }
@@ -508,7 +509,7 @@ namespace ProbablyEdited
         private static void RequireEntry(TextEntry entry)
         {
             if (entry == null)
-                throw new ArgumentNullException(nameof(entry), "文本条目不能为空。");
+                throw new ArgumentNullException(nameof(entry), UiText.Get("core.entry.null"));
         }
 
         internal sealed class PatchDocument

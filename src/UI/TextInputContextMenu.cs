@@ -22,6 +22,7 @@ namespace ProbablyEdited
         private static readonly Dictionary<int, InputBinding> Bindings = new Dictionary<int, InputBinding>();
         private static readonly List<Button> MenuActionButtons = new List<Button>(5);
         private static readonly List<Button> MenuButtons = new List<Button>(6);
+        private static readonly List<Graphic> PopupGraphics = new List<Graphic>();
         private static MenuSession _activeSession;
         private static int _nextGeneration;
 
@@ -198,6 +199,46 @@ namespace ProbablyEdited
                 binding.SetSelection(anchor, focus);
         }
 
+        internal static bool TryHandleHistoryShortcut(TMP_InputField input)
+        {
+            if (input == null || !input.isFocused)
+                return false;
+
+            TextHistoryCommand command = GetCurrentHistoryCommand();
+            if (command == TextHistoryCommand.None)
+                return false;
+
+            int instanceId = input.GetInstanceID();
+            if (!Bindings.TryGetValue(instanceId, out InputBinding binding) || binding.Input != input)
+                return false;
+            if (!IsTargetUsable(input) || !binding.CanEdit)
+                return false;
+
+            binding.Relay?.CancelPendingRestore();
+            binding.CaptureSelection();
+            MenuSession session = _activeSession;
+            if (session != null && session.Binding == binding)
+                InvokeAction(session.Generation, command == TextHistoryCommand.Undo ? MenuAction.Undo : MenuAction.Redo);
+            else if (command == TextHistoryCommand.Undo)
+                binding.Undo();
+            else
+                binding.Redo();
+            return true;
+        }
+
+        private static TextHistoryCommand GetCurrentHistoryCommand()
+        {
+            bool isMacOS = Application.platform == RuntimePlatform.OSXPlayer
+                || Application.platform == RuntimePlatform.OSXEditor;
+            return TextHistoryShortcut.Match(isMacOS,
+                Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl),
+                Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand),
+                Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift),
+                Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt),
+                Input.GetKeyDown(KeyCode.Z), Input.GetKeyDown(KeyCode.Y),
+                !string.IsNullOrEmpty(Input.compositionString));
+        }
+
 
         private static void ShowMenu(MenuSession session)
         {
@@ -221,11 +262,11 @@ namespace ProbablyEdited
 
             builder.BeginColumn(0f, TextAnchor.UpperLeft);
             MenuActionButtons.Clear();
-            AddMenuItem(builder, session, MenuAction.SelectAll, "全选", session.Binding.Input.text.Length > 0, "select_all");
-            AddMenuItem(builder, session, MenuAction.Copy, "复制", HasSelection(session), "copy");
-            AddMenuItem(builder, session, MenuAction.Paste, "粘贴", CanPaste(session), "paste");
-            AddMenuItem(builder, session, MenuAction.Undo, "撤销", CanUndo(session), "undo");
-            AddMenuItem(builder, session, MenuAction.Redo, "重做", CanRedo(session), "redo");
+            AddMenuItem(builder, session, MenuAction.SelectAll, UiText.Get("menu.select_all"), session.Binding.Input.text.Length > 0, "select_all");
+            AddMenuItem(builder, session, MenuAction.Copy, UiText.Get("menu.copy"), HasSelection(session), "copy");
+            AddMenuItem(builder, session, MenuAction.Paste, UiText.Get("menu.paste"), CanPaste(session), "paste");
+            AddMenuItem(builder, session, MenuAction.Undo, UiText.Get("menu.undo"), CanUndo(session), "undo");
+            AddMenuItem(builder, session, MenuAction.Redo, UiText.Get("menu.redo"), CanRedo(session), "redo");
             builder.End();
 
             CustomUIWindow window = builder.Handle;
@@ -234,6 +275,7 @@ namespace ProbablyEdited
                 window.frame.titleText.text = string.Empty;
 
             HideOtherButtons(window);
+            RemoveBackdropDimming(window);
             InstallDismissLayer(window);
             window.Rect.gameObject.AddComponent<TextInputContextMenuWindowRelay>().Configure(window);
             builder.Show();
@@ -292,6 +334,27 @@ namespace ProbablyEdited
             RectTransform titleText = window.frame.titleText.rectTransform;
             Transform panel = contentRoot != null ? contentRoot.parent : null;
             return panel != null && panel == titleText.parent ? panel as RectTransform : null;
+        }
+
+        private static void RemoveBackdropDimming(CustomUIWindow window)
+        {
+            if (window == null || window.Rect == null)
+                return;
+
+            RectTransform panel = GetNativeWindowPanel(window);
+            if (panel == null)
+                return;
+            PopupGraphics.Clear();
+            window.Rect.GetComponentsInChildren(true, PopupGraphics);
+            foreach (Graphic graphic in PopupGraphics)
+            {
+                if (graphic == null || graphic.transform == panel || graphic.transform.IsChildOf(panel))
+                    continue;
+                Color color = graphic.color;
+                color.a = 0f;
+                graphic.color = color;
+            }
+            PopupGraphics.Clear();
         }
 
         private static void InstallDismissLayer(CustomUIWindow window)
@@ -481,11 +544,16 @@ namespace ProbablyEdited
             private bool _historyInitialized;
             private bool _applyingHistory;
             private bool _applyingContextEdit;
+            private readonly TMP_InputField.OnValidateInput previousValidation;
+            private readonly TMP_InputField.OnValidateInput historyValidation;
 
             public InputBinding(TMP_InputField input)
             {
                 Input = input;
                 History = new TextEditHistory();
+                previousValidation = Input.onValidateInput;
+                historyValidation = ValidateCharacter;
+                Input.onValidateInput = historyValidation;
                 Input.onValueChanged.AddListener(OnValueChanged);
             }
 
@@ -581,9 +649,22 @@ namespace ProbablyEdited
             public void Dispose()
             {
                 if (Input != null)
+                {
                     Input.onValueChanged.RemoveListener(OnValueChanged);
+                    if (Input.onValidateInput == historyValidation)
+                        Input.onValidateInput = previousValidation;
+                }
                 Relay?.CancelPendingRestore();
                 Relay = null;
+            }
+
+            private char ValidateCharacter(string text, int position, char character)
+            {
+                // TMP may forward a shortcut's nonzero character after its key switch.
+                if (CanEdit && Input.isFocused && IsTargetUsable(Input)
+                    && TextHistoryShortcut.BlocksCharacter(GetCurrentHistoryCommand(), character))
+                    return '\0';
+                return previousValidation != null ? previousValidation(text, position, character) : character;
             }
 
             private void OnValueChanged(string text)
@@ -683,6 +764,7 @@ namespace ProbablyEdited
         private TMP_InputField _input;
         private int _instanceId;
         private int _restoreGeneration;
+        private int _lastShortcutFrame = -1;
 
         public void Configure(TMP_InputField input, int instanceId)
         {
@@ -709,6 +791,12 @@ namespace ProbablyEdited
             }
 
             TextInputContextMenu.RestoreSelection(_input, anchor, focus);
+        }
+
+        private void Update()
+        {
+            if (_lastShortcutFrame != Time.frameCount && TextInputContextMenu.TryHandleHistoryShortcut(_input))
+                _lastShortcutFrame = Time.frameCount;
         }
 
         public void OnPointerDown(PointerEventData eventData)

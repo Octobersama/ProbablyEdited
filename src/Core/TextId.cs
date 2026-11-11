@@ -20,7 +20,7 @@ namespace ProbablyEdited
         private static string RequirePart(string value, string parameterName)
         {
             if (string.IsNullOrWhiteSpace(value))
-                throw new ArgumentException("文本标识字段不能为空。", parameterName);
+                throw new ArgumentException(UiText.Get("core.text_id.field_empty"), parameterName);
 
             return value;
         }

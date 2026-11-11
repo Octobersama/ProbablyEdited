@@ -10,23 +10,31 @@ namespace ProbablyEdited
         private EditorController controller;
         private EditorWindow editor;
         private ModLog log;
+        private UiLocalization uiLocalization;
 
         public void Init(ModManifest manifest)
         {
             log = new ModLog(manifest);
-            controller = new EditorController(log);
-            editor = new EditorWindow(controller);
+            uiLocalization = new UiLocalization();
             Current = this;
-            ModHelper.GetConfig(manifest.ID).Define("editor", "文本编辑器", "Probably Edited", () => "打开文本编辑器",
-                tooltip: () => "从本模组的设置齿轮进入全文本编辑器。");
+            ModHelper.GetConfig(manifest.ID).Define("editor", "Probably Edited", "Probably Edited",
+                () => uiLocalization.GetOptionText("config.editor.action"),
+                tooltip: () => uiLocalization.GetOptionText("config.editor.tooltip"));
         }
 
-        public void OnEnable() => ModHook.OnModAssetsLoaded += OnAssetsReady;
+        public void OnEnable()
+        {
+            uiLocalization.RegisterOptions();
+            ModHook.OnModAssetsLoaded += OnAssetsReady;
+        }
 
         private void OnAssetsReady(LoadedMod mod)
         {
             if (mod?.Manifest?.ID != ModId) return;
             ModHook.OnModAssetsLoaded -= OnAssetsReady;
+            uiLocalization.Attach(mod);
+            controller = new EditorController(log);
+            editor = new EditorWindow(controller);
             controller.Initialize();
         }
 
@@ -36,15 +44,22 @@ namespace ProbablyEdited
             editor?.Close();
             controller?.Dispose();
             NativeFontSupport.Release();
+            uiLocalization?.Dispose();
             Current = null;
         }
 
         internal CustomUIWindow OpenEditor()
         {
-            try { return editor.Open(); }
+            try
+            {
+                if (editor == null)
+                    throw new InvalidOperationException(uiLocalization.GetOptionText("status.preparing"));
+                if (!editor.IsOpen) uiLocalization.ActivateForEditor();
+                return editor.Open();
+            }
             catch (Exception error)
             {
-                log.Error("无法打开文本编辑器：" + error);
+                log.Error(uiLocalization.FormatOptionText("log.editor_open_failed", error));
                 throw;
             }
         }

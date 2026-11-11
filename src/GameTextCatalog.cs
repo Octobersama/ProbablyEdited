@@ -35,7 +35,7 @@ namespace ProbablyEdited
             var initialization = LocalizationSettings.InitializationOperation;
             yield return initialization;
             if (initialization.Status != AsyncOperationStatus.Succeeded)
-                throw new InvalidOperationException("游戏本地化初始化失败。请查看游戏日志后重新启动。");
+                throw new InvalidOperationException(UiText.Get("catalog.error.localization_init"));
             RefreshLocales();
         }
 
@@ -43,7 +43,7 @@ namespace ProbablyEdited
         {
             var choices = NativeLocaleChoices?.GetValue(null) as ValueTuple<string, string>[];
             if (choices == null || choices.Length == 0)
-                throw new InvalidOperationException("无法读取游戏原生语言选择器，请核对游戏版本与模组兼容性。");
+                throw new InvalidOperationException(UiText.Get("catalog.error.native_locale_choices"));
 
             codes.Clear();
             names.Clear();
@@ -71,7 +71,7 @@ namespace ProbablyEdited
                 operations.Add(request);
                 yield return request;
                 if (request.Status != AsyncOperationStatus.Succeeded)
-                    throw new InvalidOperationException("无法读取语言 " + code + " 的文本表：" + request.OperationException?.Message);
+                    throw new InvalidOperationException(UiText.Format("catalog.error.load_locale", code, request.OperationException?.Message));
                 tables[code] = request.Result;
             }
             if (code != "en" && locales.TryGetValue("en", out var englishLocale) && !tables.ContainsKey("en"))
@@ -81,7 +81,7 @@ namespace ProbablyEdited
                 operations.Add(request);
                 yield return request;
                 if (request.Status != AsyncOperationStatus.Succeeded)
-                    throw new InvalidOperationException("无法读取英语回退文本表：" + request.OperationException?.Message);
+                    throw new InvalidOperationException(UiText.Format("catalog.error.load_english", request.OperationException?.Message));
                 tables["en"] = request.Result;
             }
 
@@ -104,13 +104,8 @@ namespace ProbablyEdited
                             string fallbackText = Baseline(new TextId("game", "en", tableId, id.Key), fallbackValue?.Value ?? key.Key);
                             string original = isFallback ? fallbackText : value.Value;
                             bool smart = isFallback ? fallbackValue?.IsSmart ?? value?.IsSmart ?? false : value.IsSmart;
-                            string description = "字符串表：" + table.TableCollectionName + "\n键：" + key.Key
-                                + "\n数值键：" + key.Id + "\n" + CategoryHelp(table.TableCollectionName)
-                                + (isFallback ? "\n本语言无翻译，参考显示英语或键名；恢复原文会恢复游戏原有回退。" : "")
-                                + (smart ? "\nSmart String：保留变量、条件与复数格式结构。" : "")
-                                + "\n来源为游戏本地化数据库；注册进此数据库的第三方表不提供可靠的作者标记。";
-                            var entry = new TextEntry(id, "游戏文本表", PlayerStore.VERSION, table.TableCollectionName,
-                                key.Key, Category(table.TableCollectionName), original ?? "", isFallback, smart, description);
+                            var entry = new TextEntry(id, string.Empty, PlayerStore.VERSION, table.TableCollectionName,
+                                key.Key, Category(table.TableCollectionName), original ?? "", isFallback, smart, string.Empty);
                             binding = new Binding(entry, table, key.Id, value?.Value, value != null, value?.IsSmart ?? false, smart);
                             bindings.Add(id, binding);
                         }
@@ -144,12 +139,8 @@ namespace ProbablyEdited
                             string fallbackText = english != null && english.TryGetValue(key, out var value) ? value : key;
                             original = Baseline(new TextId(mod.Manifest.ID, "en", "Localization", key), fallbackText);
                         }
-                        string description = "模组：" + mod.Manifest.Name + "\nID：" + mod.Manifest.ID
-                            + "\n版本：" + mod.Manifest.ModVersion + "\nCSV 键：" + key
-                            + "\n具体显示位置由该模组决定；编号参数如 {0} 必须保留。"
-                            + (fallback ? "\n目标语言未提供该键，参考显示英语或键名。" : "");
                         var entry = new TextEntry(id, mod.Manifest.Name ?? mod.Manifest.ID, mod.Manifest.ModVersion ?? "",
-                            "Localization", key, "模组文本", original ?? "", fallback, false, description);
+                            "Localization", key, "mod-localization", original ?? "", fallback, false, string.Empty);
                         binding = new Binding(entry, mod, targetCode, raw, exists);
                         bindings[id] = binding;
                     }
@@ -172,8 +163,7 @@ namespace ProbablyEdited
         {
             var summary = new System.Text.StringBuilder();
             int tableCount = tables.TryGetValue(code, out var loaded) ? loaded.Count : 0;
-            summary.Append("语言：").Append(code).Append("\n数据库字符串表：").Append(tableCount)
-                .Append("\n可编辑条目：").Append(Entries(code).Count).Append("\n\n已启用模组的官方本地化条目：\n");
+            summary.Append(UiText.Format("catalog.coverage.header", code, tableCount, Entries(code).Count));
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var entry in Entries(code))
                 if (entry.Id.TableId == "Localization")
@@ -182,12 +172,11 @@ namespace ProbablyEdited
             {
                 if (!IsActive(mod)) continue;
                 int count = counts.TryGetValue(mod.Manifest.ID, out int found) ? found : 0;
-                summary.Append(mod.Manifest.Name ?? mod.Manifest.ID).Append("：").Append(count);
-                if (count == 0) summary.Append("（没有可枚举条目）");
+                summary.Append(UiText.Format("catalog.coverage.mod_line", mod.Manifest.Name ?? mod.Manifest.ID, count));
+                if (count == 0) summary.Append(UiText.Get("catalog.coverage.no_entries"));
                 summary.Append('\n');
             }
-            summary.Append("\n范围：完整读取当前数据库中的字符串表、已启用模组的官方 CSV 字典及缺失翻译键。")
-                .Append("\n代码硬编码、自建文本系统和动态拼接内容不可通用枚举。数据库中第三方注册表的作者来源可能不明；不据表名伪造来源。");
+            summary.Append(UiText.Get("catalog.coverage.scope"));
             return summary.ToString();
         }
 
@@ -250,26 +239,24 @@ namespace ProbablyEdited
         {
             switch (table)
             {
-                case "ClientName": return "顾客 / 姓名";
-                case "Dialogue": return "顾客 / 对话";
-                case "PhoneDialogue": return "电话 / 对话";
-                case "Item": return "物品";
-                case "Interactable": return "场景 / 交互";
-                case "Hint": return "提示";
-                case "MainMenu": return "界面 / 主菜单";
-                case "UI": return "界面 / 游戏界面";
-                case "Mechanic": return "经营 / 机制";
-                case "NetworkUpgrade": return "成长 / 人脉升级";
-                case "NewGame": return "新游戏";
-                case "PerkTable": return "成长 / 专长";
-                case "RepPerkTable": return "成长 / 声望专长";
-                case "Tutorial": return "教程";
-                default: return "未分类 / " + table;
+                case "ClientName": return "ClientName";
+                case "Dialogue": return "Dialogue";
+                case "PhoneDialogue": return "PhoneDialogue";
+                case "Item": return "Item";
+                case "Interactable": return "Interactable";
+                case "Hint": return "Hint";
+                case "MainMenu": return "MainMenu";
+                case "UI": return "UI";
+                case "Mechanic": return "Mechanic";
+                case "NetworkUpgrade": return "NetworkUpgrade";
+                case "NewGame": return "NewGame";
+                case "PerkTable": return "PerkTable";
+                case "RepPerkTable": return "RepPerkTable";
+                case "Tutorial": return "Tutorial";
+                default: return "table:" + table;
             }
         }
 
-        private static string CategoryHelp(string table) =>
-            CatalogPresentation.CategoryDescription(Category(table));
 
         private sealed class Binding
         {
@@ -309,7 +296,7 @@ namespace ProbablyEdited
             {
                 if (Mod == null)
                 {
-                    if (table == null) throw new InvalidOperationException("文本表已被卸载，请重新启动游戏后再应用修改。");
+                    if (table == null) throw new InvalidOperationException(UiText.Get("catalog.error.table_unloaded"));
                     var value = table.GetEntry(keyId) ?? table.AddEntry(keyId, text);
                     value.Value = text;
                     value.IsSmart = smart;
