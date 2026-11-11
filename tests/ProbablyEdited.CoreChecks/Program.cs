@@ -17,9 +17,65 @@ internal static class Program
         Run("unavailable imported keys remain saved and other locales are not missing", RetainsUnavailableOverrides, ref failures);
         Run("saved snapshots track stage, revert, and restore", TracksSavedSnapshots, ref failures);
         Run("preview plans cannot apply after state changes", RejectsStalePlans, ref failures);
+        Run("text edit history restores undo and redo snapshots", TextHistoryRestoresSnapshots, ref failures);
+        Run("text edit history clears redo after a new edit", TextHistoryClearsRedoAfterEditing, ref failures);
+        Run("text edit history reset starts from the current target", TextHistoryResetsTarget, ref failures);
+        Run("text edit history retains selection positions", TextHistoryRetainsSelection, ref failures);
 
-        Console.WriteLine(failures == 0 ? "All 8 Core checks passed." : $"{failures} Core check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All 12 Core checks passed." : $"{failures} Core check(s) failed.");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void TextHistoryRestoresSnapshots()
+    {
+        var history = new TextEditHistory();
+        history.Reset("hello", 5, 5);
+        history.Record("hello!", 6, 6);
+        history.Record("hello!!", 7, 7);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable after two edits.");
+        Equal("hello!", undone.Text, "Undo did not restore the previous text.");
+        Ensure(history.TryRedo(out TextEditSnapshot redone), "Redo was unavailable after undo.");
+        Equal("hello!!", redone.Text, "Redo did not restore the edited text.");
+    }
+
+    private static void TextHistoryClearsRedoAfterEditing()
+    {
+        var history = new TextEditHistory();
+        history.Reset("a", 1, 1);
+        history.Record("ab", 2, 2);
+        history.Record("abc", 3, 3);
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable after typing.");
+        Equal("ab", undone.Text, "Undo restored the wrong text before branching.");
+
+        history.Record("aB", 2, 2);
+        Ensure(!history.CanRedo, "A new edit after undo left redo history available.");
+        Ensure(history.TryUndo(out undone), "The branch edit could not be undone.");
+        Equal("ab", undone.Text, "Undo did not return to the branch point.");
+        Ensure(history.TryRedo(out TextEditSnapshot redone), "The branch edit could not be redone.");
+        Equal("aB", redone.Text, "Redo restored a discarded edit instead of the branch.");
+    }
+
+    private static void TextHistoryResetsTarget()
+    {
+        var history = new TextEditHistory();
+        history.Reset("first target", 12, 12);
+        history.Record("first target edit", 17, 17);
+        history.Reset("second target", 13, 13);
+
+        Ensure(!history.CanUndo, "A target reset retained the previous target's undo history.");
+        Equal("second target", history.Current.Text, "A target reset did not establish the current text.");
+    }
+
+    private static void TextHistoryRetainsSelection()
+    {
+        var history = new TextEditHistory();
+        history.Reset("abcdef", 5, 2);
+        history.Record("abcXdef", 4, 4);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable for selection restoration.");
+        Equal(5, undone.AnchorPosition, "Undo lost the selection anchor.");
+        Equal(2, undone.FocusPosition, "Undo lost the selection focus.");
     }
 
     private static void RoundTripsReplacementText()

@@ -10,14 +10,14 @@ namespace ProbablyEdited
 {
     public sealed class PresetInfo
     {
-        public int Slot { get; }
+        public string Id { get; }
         public string Name { get; }
         public bool IsDirty { get; }
         public bool IsActive { get; }
 
-        internal PresetInfo(int slot, string name, bool isDirty, bool isActive)
+        internal PresetInfo(string id, string name, bool isDirty, bool isActive)
         {
-            Slot = slot;
+            Id = id;
             Name = name;
             IsDirty = isDirty;
             IsActive = isActive;
@@ -42,7 +42,7 @@ namespace ProbablyEdited
     {
         private readonly ReadOnlyCollection<string> _warnings;
 
-        public int TargetSlot { get; }
+        public string TargetPresetId { get; }
         public string PresetName { get; }
         public bool CreatesPreset { get; }
         public PresetStatistics Incoming { get; }
@@ -52,14 +52,14 @@ namespace ProbablyEdited
         public IReadOnlyList<string> Warnings => _warnings;
 
         internal object WorkspaceMarker { get; }
-        internal int SelectedSlotMarker { get; }
+        internal string SelectedPresetIdMarker { get; }
         internal EditorState SelectedState { get; }
         internal ImportPlan CatalogPlan { get; }
         internal EditorState TargetState { get; }
         internal ImportPlan TargetPlan { get; }
 
         internal PresetImportPreview(
-            int targetSlot,
+            string targetPresetId,
             bool createsPreset,
             string presetName,
             PresetStatistics incoming,
@@ -68,22 +68,22 @@ namespace ProbablyEdited
             int unavailableCount,
             IList<string> warnings,
             object workspaceMarker,
-            int selectedSlotMarker,
+            string selectedPresetIdMarker,
             EditorState selectedState,
             ImportPlan catalogPlan,
             EditorState targetState,
             ImportPlan targetPlan)
         {
-            TargetSlot = targetSlot;
+            TargetPresetId = targetPresetId;
             CreatesPreset = createsPreset;
+            PresetName = presetName;
             Incoming = incoming;
             Existing = existing;
             ConflictCount = conflictCount;
             UnavailableCount = unavailableCount;
-            PresetName = presetName;
-            _warnings = new List<string>(warnings).AsReadOnly();
+            _warnings = new ReadOnlyCollection<string>(new List<string>(warnings));
             WorkspaceMarker = workspaceMarker;
-            SelectedSlotMarker = selectedSlotMarker;
+            SelectedPresetIdMarker = selectedPresetIdMarker;
             SelectedState = selectedState;
             CatalogPlan = catalogPlan;
             TargetState = targetState;
@@ -93,43 +93,43 @@ namespace ProbablyEdited
 
     public sealed class PresetWorkspace
     {
-        public const int MaxSlots = 36;
+        public const int MaxPresets = 36;
         private const string WorkspaceSchema = "probably-edited-workspace";
-
-        private const int WorkspaceSchemaVersion = 2;
+        private const int WorkspaceSchemaVersion = 3;
         private const int LegacyWorkspaceSchemaVersion = 1;
-        private static readonly string[] WorkspaceProperties = { "schema", "schemaVersion", "activeSlot", "presets" };
+        private const int NamedWorkspaceSchemaVersion = 2;
+        private static readonly string[] WorkspacePropertiesV1V2 = { "schema", "schemaVersion", "activeSlot", "presets" };
+        private static readonly string[] WorkspacePropertiesV3 = { "schema", "schemaVersion", "activePresetId", "presets" };
         private static readonly string[] PresetPropertiesV1 = { "slot", "overrides" };
         private static readonly string[] PresetPropertiesV2 = { "slot", "name", "overrides" };
+        private static readonly string[] PresetPropertiesV3 = { "id", "name", "overrides" };
         private static readonly string[] OverrideProperties = { "sourceId", "locale", "tableId", "key", "text" };
         private static readonly PresetStatistics EmptyStatistics = new PresetStatistics(0, 0, 0);
 
         private readonly object _marker = new object();
-        private readonly SortedDictionary<int, PresetSlot> _slots = new SortedDictionary<int, PresetSlot>();
-        private readonly HashSet<int> _removedSavedSlots = new HashSet<int>();
+        private readonly List<PresetRecord> _presets = new List<PresetRecord>();
+        private readonly Dictionary<string, PresetRecord> _presetsById = new Dictionary<string, PresetRecord>(StringComparer.Ordinal);
+        private readonly HashSet<string> _removedSavedPresetIds = new HashSet<string>(StringComparer.Ordinal);
         private IReadOnlyDictionary<TextId, string> _activeOverrides;
-        private int _activeSlot = 1;
-        private int _selectedSlot = 1;
+        private string _activePresetId;
+        private string _selectedPresetId;
 
-        public int ActivePresetSlot => _activeSlot;
-        public int SelectedPresetSlot => _selectedSlot;
-        public EditorState State => _slots[_selectedSlot].State;
+        public string ActivePresetId => _activePresetId;
+        public string SelectedPresetId => _selectedPresetId;
+        public EditorState State => _presetsById[_selectedPresetId].State;
         public IReadOnlyDictionary<TextId, string> ActiveOverrides => _activeOverrides;
-        public bool CanCreatePreset => _slots.Count < MaxSlots;
-        public bool CanDeleteSelectedPreset => _slots.Count > 1 && _selectedSlot != _activeSlot;
+        public bool CanCreatePreset => _presets.Count < MaxPresets;
+        public bool CanDeleteSelectedPreset => _presets.Count > 1 && !StringComparer.Ordinal.Equals(_selectedPresetId, _activePresetId);
         public bool RequiresWorkspaceMigration { get; private set; }
 
         public bool HasUnsavedChanges
         {
             get
             {
-                if (RequiresWorkspaceMigration)
+                if (RequiresWorkspaceMigration || _removedSavedPresetIds.Count > 0)
                     return true;
 
-                if (_removedSavedSlots.Count > 0)
-                    return true;
-
-                foreach (PresetSlot preset in _slots.Values)
+                foreach (PresetRecord preset in _presets)
                 {
                     if (preset.IsNew || preset.State.IsDirty || !StringComparer.Ordinal.Equals(preset.Name, preset.SavedName))
                         return true;
@@ -143,16 +143,15 @@ namespace ProbablyEdited
         {
             get
             {
-                var result = new PresetInfo[_slots.Count];
-                int index = 0;
-                foreach (KeyValuePair<int, PresetSlot> pair in _slots)
+                var result = new PresetInfo[_presets.Count];
+                for (int index = 0; index < _presets.Count; index++)
                 {
-                    PresetSlot preset = pair.Value;
-                    result[index++] = new PresetInfo(
-                        pair.Key,
+                    PresetRecord preset = _presets[index];
+                    result[index] = new PresetInfo(
+                        preset.Id,
                         preset.Name,
                         preset.IsNew || preset.State.IsDirty || !StringComparer.Ordinal.Equals(preset.Name, preset.SavedName),
-                        pair.Key == _activeSlot);
+                        StringComparer.Ordinal.Equals(preset.Id, _activePresetId));
                 }
                 return Array.AsReadOnly(result);
             }
@@ -160,9 +159,14 @@ namespace ProbablyEdited
 
         public PresetWorkspace()
         {
-            _slots.Add(1, new PresetSlot(new EditorState(), GetPresetName(1), false));
-            _activeOverrides = ReadOnlySnapshot(_slots[1].State.Overrides);
+            PresetRecord initial = new PresetRecord(CreatePresetId(), new EditorState(), GetDefaultPresetName(1), false);
+            AddPreset(initial);
+            _activePresetId = initial.Id;
+            _selectedPresetId = initial.Id;
+            _activeOverrides = ReadOnlySnapshot(initial.State.Overrides);
         }
+
+
         public static PresetWorkspace Load(string workspaceJson, string legacyActiveJson)
         {
             var workspace = new PresetWorkspace();
@@ -179,7 +183,9 @@ namespace ProbablyEdited
 
                 var legacyState = new EditorState();
                 legacyState.LoadSaved(legacyActiveJson);
-                workspace._slots[1] = new PresetSlot(legacyState, GetPresetName(1), false);
+                PresetRecord initial = new PresetRecord(workspace._selectedPresetId, legacyState, GetDefaultPresetName(1), false);
+                workspace._presets[0] = initial;
+                workspace._presetsById[initial.Id] = initial;
                 workspace._activeOverrides = ReadOnlySnapshot(legacyState.Overrides);
                 workspace.RequiresWorkspaceMigration = true;
             }
@@ -187,23 +193,20 @@ namespace ProbablyEdited
             return workspace;
         }
 
-        public void SelectPreset(int slot)
+        public void SelectPreset(string presetId)
         {
-            ValidateSlot(slot);
-            if (!_slots.ContainsKey(slot))
-                throw new InvalidOperationException($"预设{slot:00}尚不存在。");
-
-            _selectedSlot = slot;
-        }
-        public string GetPresetNameForSlot(int slot)
-        {
-            ValidateOccupiedSlot(slot);
-            return _slots[slot].Name;
+            GetPreset(presetId);
+            _selectedPresetId = presetId;
         }
 
-        public void RenamePreset(int slot, string name)
+        public string GetPresetName(string presetId)
         {
-            ValidateOccupiedSlot(slot);
+            return GetPreset(presetId).Name;
+        }
+
+        public void RenamePreset(string presetId, string name)
+        {
+            PresetRecord preset = GetPreset(presetId);
             if (name == null)
                 throw new ArgumentNullException(nameof(name), "预设名称不能为空。");
 
@@ -211,61 +214,52 @@ namespace ProbablyEdited
             if (normalized.Length == 0)
                 throw new ArgumentException("预设名称不能为空。", nameof(name));
 
-            _slots[slot].Name = normalized;
+            preset.Name = normalized;
         }
 
-        public int CreatePreset()
+        public string CreatePreset()
         {
             if (!CanCreatePreset)
-                throw new InvalidOperationException($"最多只能创建 {MaxSlots} 个预设。");
-
-            int slot = 1;
-            while (_slots.ContainsKey(slot))
-                slot++;
+                throw new InvalidOperationException($"最多只能创建 {MaxPresets} 个预设。");
 
             var state = new EditorState();
             state.SetCatalog(State.Entries);
-            _slots.Add(slot, new PresetSlot(state, GetPresetName(slot), true));
-            _selectedSlot = slot;
-            return slot;
+            string presetId = CreatePresetId();
+            var preset = new PresetRecord(presetId, state, GetNextPresetName(), true);
+            AddPreset(preset);
+            _selectedPresetId = presetId;
+            return presetId;
         }
-        public void DeletePreset(int slot)
+
+        public void DeletePreset(string presetId)
         {
-            ValidateOccupiedSlot(slot);
-            if (_slots.Count == 1)
+            PresetRecord preset = GetPreset(presetId);
+            if (_presets.Count == 1)
             {
                 throw new InvalidOperationException(
                     "至少保留一个预设。当前应用的预设不能删除；请先保存并应用另一个预设后再删除。");
             }
 
-            if (slot == _activeSlot)
+            if (StringComparer.Ordinal.Equals(presetId, _activePresetId))
                 throw new InvalidOperationException("当前应用的预设不能删除；请先保存并应用另一个预设后再删除。");
 
-            PresetSlot preset = _slots[slot];
             if (!preset.IsNew)
-                _removedSavedSlots.Add(slot);
+                _removedSavedPresetIds.Add(presetId);
 
-            _slots.Remove(slot);
-            if (_selectedSlot == slot)
-                _selectedSlot = _activeSlot;
+            _presets.Remove(preset);
+            _presetsById.Remove(presetId);
+            if (StringComparer.Ordinal.Equals(_selectedPresetId, presetId))
+                _selectedPresetId = _activePresetId;
         }
 
-
-        public PresetStatistics GetPresetStatistics(int slot)
+        public PresetStatistics GetPresetStatistics(string presetId)
         {
-            ValidateSlot(slot);
-            return _slots.TryGetValue(slot, out PresetSlot preset)
-                ? GetStatistics(preset.State.Overrides)
-                : EmptyStatistics;
+            return GetStatistics(GetPreset(presetId).State.Overrides);
         }
 
-        public IReadOnlyList<string> GetPresetLocales(int slot)
+        public IReadOnlyList<string> GetPresetLocales(string presetId)
         {
-            ValidateSlot(slot);
-            if (!_slots.TryGetValue(slot, out PresetSlot preset))
-                return Array.AsReadOnly(Array.Empty<string>());
-
-            return GetLocales(preset.State.Overrides);
+            return GetLocales(GetPreset(presetId).State.Overrides);
         }
 
         public IReadOnlyList<string> GetActiveLocales()
@@ -275,23 +269,18 @@ namespace ProbablyEdited
 
         public string SerializeWorkspace()
         {
-            return SerializeWorkspace(_activeSlot);
+            return SerializeWorkspace(_activePresetId);
         }
 
         public string SerializeForSaveAndApply()
         {
-            return SerializeWorkspace(_selectedSlot);
-        }
-
-        public void MarkWorkspacePersisted()
-        {
-            RequiresWorkspaceMigration = false;
+            return SerializeWorkspace(_selectedPresetId);
         }
 
         public void MarkSavedAndApplied()
         {
-            _activeSlot = _selectedSlot;
-            foreach (PresetSlot preset in _slots.Values)
+            _activePresetId = _selectedPresetId;
+            foreach (PresetRecord preset in _presets)
             {
                 preset.State.MarkSaved();
                 preset.SavedName = preset.Name;
@@ -299,28 +288,26 @@ namespace ProbablyEdited
             }
 
             _activeOverrides = ReadOnlySnapshot(State.Overrides);
-            _removedSavedSlots.Clear();
+            _removedSavedPresetIds.Clear();
             RequiresWorkspaceMigration = false;
         }
 
-        public string ExportPresetJson(int slot, string gameVersion)
+        public string ExportPresetJson(string presetId, string gameVersion)
         {
-            ValidateOccupiedSlot(slot);
-            return _slots[slot].State.ExportPresetJson(gameVersion, _slots[slot].Name);
+            PresetRecord preset = GetPreset(presetId);
+            return preset.State.ExportPresetJson(gameVersion, preset.Name);
         }
 
-        public PresetImportPreview PreviewImport(string json, int targetSlot, string gameVersion)
+        public PresetImportPreview PreviewImport(string json, string targetPresetId, string gameVersion)
         {
-            ValidateSlot(targetSlot);
+            bool createsPreset = targetPresetId == null;
+            PresetRecord existingPreset = createsPreset ? null : GetPreset(targetPresetId);
+            if (createsPreset && !CanCreatePreset)
+                throw new InvalidOperationException($"最多只能导入到 {MaxPresets} 个预设。");
 
             EditorState.PatchDocument document = EditorState.ParseSharedPatch(json);
             EditorState selectedState = State;
             ImportPlan catalogPlan = selectedState.PreviewImport(document, gameVersion);
-            bool createsPreset = !_slots.TryGetValue(targetSlot, out PresetSlot existingPreset);
-
-            if (createsPreset && !CanCreatePreset)
-                throw new InvalidOperationException($"最多只能导入到 {MaxSlots} 个预设槽位。");
-
             EditorState targetState;
             if (createsPreset)
             {
@@ -338,7 +325,7 @@ namespace ProbablyEdited
             PresetStatistics incoming = GetStatistics(document.Overrides);
             PresetStatistics existing = createsPreset ? EmptyStatistics : GetStatistics(targetState.Overrides);
             string presetName = createsPreset
-                ? (document.PresetName == null ? GetPresetName(targetSlot) : document.PresetName.Trim())
+                ? (document.PresetName == null ? GetNextPresetName() : document.PresetName.Trim())
                 : existingPreset.Name;
             var warnings = new List<string>();
 
@@ -359,7 +346,7 @@ namespace ProbablyEdited
                 warnings.Add($"有 {targetPlan.ConflictCount} 项与目标预设不同；不选择覆盖冲突时将保留目标值。");
 
             return new PresetImportPreview(
-                targetSlot,
+                targetPresetId,
                 createsPreset,
                 presetName,
                 incoming,
@@ -368,7 +355,7 @@ namespace ProbablyEdited
                 catalogPlan.UnavailableCount,
                 warnings,
                 _marker,
-                _selectedSlot,
+                _selectedPresetId,
                 selectedState,
                 catalogPlan,
                 targetState,
@@ -381,16 +368,20 @@ namespace ProbablyEdited
                 throw new ArgumentNullException(nameof(preview), "导入预览不能为空；请先预览文件。");
             if (!ReferenceEquals(preview.WorkspaceMarker, _marker))
                 throw new InvalidOperationException("此导入预览不属于当前工作区，请重新预览文件。");
-            if (_selectedSlot != preview.SelectedSlotMarker || !ReferenceEquals(State, preview.SelectedState))
+            if (!StringComparer.Ordinal.Equals(_selectedPresetId, preview.SelectedPresetIdMarker) ||
+                !ReferenceEquals(State, preview.SelectedState))
+            {
                 throw new InvalidOperationException("预览后当前预设已变化，请重新预览文件。");
+            }
 
             preview.SelectedState.ValidateImportPlan(preview.CatalogPlan);
             if (preview.CreatesPreset)
             {
-                if (_slots.ContainsKey(preview.TargetSlot) || !CanCreatePreset)
-                    throw new InvalidOperationException("预览后目标槽位已变化或容量已满，请重新预览文件。");
+                if (preview.TargetPresetId != null || !CanCreatePreset)
+                    throw new InvalidOperationException("预览后目标预设已变化或容量已满，请重新预览文件。");
             }
-            else if (!_slots.TryGetValue(preview.TargetSlot, out PresetSlot currentPreset) ||
+            else if (preview.TargetPresetId == null ||
+                     !_presetsById.TryGetValue(preview.TargetPresetId, out PresetRecord currentPreset) ||
                      !ReferenceEquals(currentPreset.State, preview.TargetState))
             {
                 throw new InvalidOperationException("预览后目标预设已变化，请重新预览文件。");
@@ -399,54 +390,51 @@ namespace ProbablyEdited
             preview.TargetState.ValidateImportPlan(preview.TargetPlan);
             preview.TargetState.ApplyImport(preview.TargetPlan, overwriteConflicts);
             if (preview.CreatesPreset)
-                _slots.Add(preview.TargetSlot, new PresetSlot(preview.TargetState, preview.PresetName, true));
-
-            _selectedSlot = preview.TargetSlot;
-        }
-
-        public static string GetPresetName(int slot)
-        {
-            ValidateSlot(slot);
-            return "预设" + slot.ToString("00", CultureInfo.InvariantCulture);
+            {
+                string createdPresetId = CreatePresetId();
+                AddPreset(new PresetRecord(createdPresetId, preview.TargetState, preview.PresetName, true));
+                _selectedPresetId = createdPresetId;
+            }
+            else
+            {
+                _selectedPresetId = preview.TargetPresetId;
+            }
         }
 
         private void LoadWorkspace(string json)
         {
             WorkspaceDocument document = ParseWorkspace(json);
-            var loadedSlots = new SortedDictionary<int, PresetSlot>();
-            foreach (KeyValuePair<int, WorkspacePreset> pair in document.Presets)
+            _presets.Clear();
+            _presetsById.Clear();
+            foreach (WorkspacePreset workspacePreset in document.Presets)
             {
                 var state = new EditorState();
-                state.LoadOverrides(pair.Value.Overrides);
-                loadedSlots.Add(pair.Key, new PresetSlot(state, pair.Value.Name, false));
+                state.LoadOverrides(workspacePreset.Overrides);
+                AddPreset(new PresetRecord(workspacePreset.Id, state, workspacePreset.Name, false));
             }
 
-            _slots.Clear();
-            foreach (KeyValuePair<int, PresetSlot> pair in loadedSlots)
-                _slots.Add(pair.Key, pair.Value);
-
-            _activeSlot = document.ActiveSlot;
-            _selectedSlot = document.ActiveSlot;
-            _activeOverrides = ReadOnlySnapshot(_slots[_activeSlot].State.Overrides);
-            RequiresWorkspaceMigration = false;
+            _activePresetId = document.ActivePresetId;
+            _selectedPresetId = document.ActivePresetId;
+            _activeOverrides = ReadOnlySnapshot(_presetsById[_activePresetId].State.Overrides);
+            RequiresWorkspaceMigration = document.RequiresMigration;
         }
 
-        private string SerializeWorkspace(int activeSlot)
+        private string SerializeWorkspace(string activePresetId)
         {
-            ValidateOccupiedSlot(activeSlot);
+            GetPreset(activePresetId);
             var presets = new JArray();
-            foreach (KeyValuePair<int, PresetSlot> pair in _slots)
+            foreach (PresetRecord preset in _presets)
             {
                 presets.Add(new JObject(
-                    new JProperty("slot", pair.Key),
-                    new JProperty("name", pair.Value.Name),
-                    new JProperty("overrides", SerializeOverrides(pair.Value.State.Overrides))));
+                    new JProperty("id", preset.Id),
+                    new JProperty("name", preset.Name),
+                    new JProperty("overrides", SerializeOverrides(preset.State.Overrides))));
             }
 
             var root = new JObject(
                 new JProperty("schema", WorkspaceSchema),
                 new JProperty("schemaVersion", WorkspaceSchemaVersion),
-                new JProperty("activeSlot", activeSlot),
+                new JProperty("activePresetId", activePresetId),
                 new JProperty("presets", presets));
             return root.ToString(Formatting.Indented);
         }
@@ -479,23 +467,36 @@ namespace ProbablyEdited
             if (!(token is JObject root))
                 throw new FormatException("工作区根节点必须是 JSON 对象。");
 
-            RequireExactProperties(root, WorkspaceProperties, "工作区");
+            int version = RequireInt(root["schemaVersion"], "工作区字段 schemaVersion");
+            if (version != LegacyWorkspaceSchemaVersion && version != NamedWorkspaceSchemaVersion && version != WorkspaceSchemaVersion)
+                throw new NotSupportedException($"不支持工作区版本 {version}；当前支持 schemaVersion 1、2 和 {WorkspaceSchemaVersion}。");
+
+            RequireExactProperties(root, version == WorkspaceSchemaVersion ? WorkspacePropertiesV3 : WorkspacePropertiesV1V2, "工作区");
             string schema = RequireString(root, "schema", "工作区", false);
             if (!StringComparer.Ordinal.Equals(schema, WorkspaceSchema))
                 throw new NotSupportedException($"不支持工作区格式“{schema}”。");
 
-            int version = RequireInt(root["schemaVersion"], "工作区字段 schemaVersion");
-            if (version != LegacyWorkspaceSchemaVersion && version != WorkspaceSchemaVersion)
-                throw new NotSupportedException($"不支持工作区版本 {version}；当前支持 schemaVersion {LegacyWorkspaceSchemaVersion} 和 {WorkspaceSchemaVersion}。");
+            bool legacy = version < WorkspaceSchemaVersion;
+            int activeSlot = 0;
+            string activePresetId = null;
+            if (legacy)
+            {
+                activeSlot = RequireInt(root["activeSlot"], "工作区字段 activeSlot");
+                ValidateLegacySlot(activeSlot);
+            }
+            else
+            {
+                activePresetId = RequireString(root, "activePresetId", "工作区", false);
+            }
 
-            int activeSlot = RequireInt(root["activeSlot"], "工作区字段 activeSlot");
-            ValidateSlot(activeSlot);
             if (!(root["presets"] is JArray presetArray))
                 throw new FormatException("工作区字段 presets 必须是数组。");
-            if (presetArray.Count == 0 || presetArray.Count > MaxSlots)
-                throw new FormatException($"工作区必须包含 1–{MaxSlots} 个预设。");
+            if (presetArray.Count == 0 || presetArray.Count > MaxPresets)
+                throw new FormatException($"工作区必须包含 1–{MaxPresets} 个预设。");
 
-            var presets = new SortedDictionary<int, WorkspacePreset>();
+            var presets = new List<WorkspacePreset>(presetArray.Count);
+            var legacyPresets = legacy ? new SortedDictionary<int, WorkspacePreset>() : null;
+            var presetIds = new HashSet<string>(StringComparer.Ordinal);
             int index = 0;
             foreach (JToken item in presetArray)
             {
@@ -504,25 +505,60 @@ namespace ProbablyEdited
                     throw new FormatException($"工作区 presets 第 {index} 项必须是 JSON 对象。");
 
                 RequireExactProperties(presetObject,
-                    version == LegacyWorkspaceSchemaVersion ? PresetPropertiesV1 : PresetPropertiesV2,
+                    version == LegacyWorkspaceSchemaVersion ? PresetPropertiesV1 :
+                    version == NamedWorkspaceSchemaVersion ? PresetPropertiesV2 : PresetPropertiesV3,
                     $"工作区 presets 第 {index} 项");
-                int slot = RequireInt(presetObject["slot"], $"工作区 presets 第 {index} 项 slot");
-                ValidateSlot(slot);
-                if (presets.ContainsKey(slot))
-                    throw new FormatException($"工作区预设槽位 {slot} 重复。");
 
-                string name = version == LegacyWorkspaceSchemaVersion
-                    ? GetPresetName(slot)
-                    : RequireString(presetObject, "name", $"工作区 presets 第 {index} 项", false);
+                string id;
+                string name;
+                int legacySlot = 0;
+                if (legacy)
+                {
+                    legacySlot = RequireInt(presetObject["slot"], $"工作区 presets 第 {index} 项 slot");
+                    ValidateLegacySlot(legacySlot);
+                    id = CreatePresetId();
+                    name = version == LegacyWorkspaceSchemaVersion
+                        ? GetDefaultPresetName(legacySlot)
+                        : RequireString(presetObject, "name", $"工作区 presets 第 {index} 项", false);
+                }
+                else
+                {
+                    id = RequireString(presetObject, "id", $"工作区 presets 第 {index} 项", false);
+                    name = RequireString(presetObject, "name", $"工作区 presets 第 {index} 项", false);
+                }
+
+                if (!presetIds.Add(id))
+                    throw new FormatException($"工作区预设 ID “{id}”重复。");
+
                 Dictionary<TextId, string> overrides = ParseOverrides(
                     presetObject["overrides"], $"工作区 presets 第 {index} 项 overrides");
-                presets.Add(slot, new WorkspacePreset(name, overrides));
+                var preset = new WorkspacePreset(id, name, overrides);
+                if (legacy)
+                {
+                    if (legacyPresets.ContainsKey(legacySlot))
+                        throw new FormatException($"工作区预设序号 {legacySlot} 重复。");
+                    legacyPresets.Add(legacySlot, preset);
+                    if (legacySlot == activeSlot)
+                        activePresetId = id;
+                }
+                else
+                {
+                    presets.Add(preset);
+                }
             }
 
-            if (!presets.ContainsKey(activeSlot))
-                throw new FormatException("工作区 activeSlot 必须指向一个已存在的预设。");
+            if (legacy)
+            {
+                foreach (WorkspacePreset preset in legacyPresets.Values)
+                    presets.Add(preset);
+            }
 
-            return new WorkspaceDocument(activeSlot, presets);
+            if (activePresetId == null || !presetIds.Contains(activePresetId))
+                throw new FormatException(legacy
+                    ? "工作区 activeSlot 必须指向一个已存在的预设。"
+                    : "工作区 activePresetId 必须指向一个已存在的预设。");
+
+            return new WorkspaceDocument(activePresetId, presets, legacy);
         }
 
         private static Dictionary<TextId, string> ParseOverrides(JToken token, string context)
@@ -707,28 +743,71 @@ namespace ProbablyEdited
             return order != 0 ? order : StringComparer.Ordinal.Compare(left.Key.Key, right.Key.Key);
         }
 
-        private static void ValidateSlot(int slot)
+        private static string CreatePresetId()
         {
-            if (slot < 1 || slot > MaxSlots)
-                throw new ArgumentOutOfRangeException(nameof(slot), slot, $"预设槽位必须在 1–{MaxSlots} 之间。");
+            return Guid.NewGuid().ToString("N");
         }
 
-        private void ValidateOccupiedSlot(int slot)
+        private static string GetDefaultPresetName(int number)
         {
-            ValidateSlot(slot);
-            if (!_slots.ContainsKey(slot))
-                throw new InvalidOperationException($"预设{slot:00}尚不存在。");
+            return "预设" + number.ToString("00", CultureInfo.InvariantCulture);
         }
 
-        private sealed class PresetSlot
+        private string GetNextPresetName()
         {
+            int number = _presets.Count + 1;
+            while (ContainsPresetName(GetDefaultPresetName(number)))
+                number++;
+            return GetDefaultPresetName(number);
+        }
+
+        private bool ContainsPresetName(string name)
+        {
+            foreach (PresetRecord preset in _presets)
+            {
+                if (StringComparer.Ordinal.Equals(preset.Name, name))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void AddPreset(PresetRecord preset)
+        {
+            if (_presetsById.ContainsKey(preset.Id))
+                throw new InvalidOperationException("预设 ID 冲突；未修改工作区。");
+
+            _presets.Add(preset);
+            _presetsById.Add(preset.Id, preset);
+        }
+
+        private PresetRecord GetPreset(string presetId)
+        {
+            if (string.IsNullOrWhiteSpace(presetId))
+                throw new ArgumentException("预设 ID 不能为空。", nameof(presetId));
+            if (!_presetsById.TryGetValue(presetId, out PresetRecord preset))
+                throw new InvalidOperationException("指定的预设不存在。");
+            return preset;
+        }
+
+
+        private static void ValidateLegacySlot(int slot)
+        {
+            if (slot < 1 || slot > MaxPresets)
+                throw new FormatException($"旧工作区预设序号必须在 1–{MaxPresets} 之间。");
+        }
+
+        private sealed class PresetRecord
+        {
+            public string Id { get; }
             public EditorState State { get; }
             public string Name { get; set; }
             public string SavedName { get; set; }
             public bool IsNew { get; set; }
 
-            public PresetSlot(EditorState state, string name, bool isNew)
+            public PresetRecord(string id, EditorState state, string name, bool isNew)
             {
+                Id = id;
                 State = state;
                 Name = name;
                 SavedName = name;
@@ -738,11 +817,13 @@ namespace ProbablyEdited
 
         private sealed class WorkspacePreset
         {
+            public string Id { get; }
             public string Name { get; }
             public Dictionary<TextId, string> Overrides { get; }
 
-            public WorkspacePreset(string name, Dictionary<TextId, string> overrides)
+            public WorkspacePreset(string id, string name, Dictionary<TextId, string> overrides)
             {
+                Id = id;
                 Name = name;
                 Overrides = overrides;
             }
@@ -750,13 +831,15 @@ namespace ProbablyEdited
 
         private sealed class WorkspaceDocument
         {
-            public int ActiveSlot { get; }
-            public SortedDictionary<int, WorkspacePreset> Presets { get; }
+            public string ActivePresetId { get; }
+            public List<WorkspacePreset> Presets { get; }
+            public bool RequiresMigration { get; }
 
-            public WorkspaceDocument(int activeSlot, SortedDictionary<int, WorkspacePreset> presets)
+            public WorkspaceDocument(string activePresetId, List<WorkspacePreset> presets, bool requiresMigration)
             {
-                ActiveSlot = activeSlot;
+                ActivePresetId = activePresetId;
                 Presets = presets;
+                RequiresMigration = requiresMigration;
             }
         }
     }

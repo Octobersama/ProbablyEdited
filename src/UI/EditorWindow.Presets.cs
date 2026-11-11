@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
-using System.Globalization;
 using TMPro;
 
 namespace ProbablyEdited
@@ -13,11 +12,11 @@ namespace ProbablyEdited
         private readonly List<TMP_Text> _presetTextBuffer = new List<TMP_Text>(8);
         private static readonly List<string> PageSizeOptions = new List<string> { "30", "50", "100", "200", "500" };
 
-        private readonly List<int> _presetSlots = new List<int>();
+        private readonly List<string> _presetIds = new List<string>();
         private readonly List<string> _presetCaptions = new List<string>();
-        private readonly List<int> _importTargetSlots = new List<int>();
+        private readonly List<string> _importTargetPresetIds = new List<string>();
         private readonly List<string> _importTargetCaptions = new List<string>();
-        private readonly List<int> _exportPresetSlots = new List<int>();
+        private readonly List<string> _exportPresetIds = new List<string>();
         private readonly List<string> _exportPresetCaptions = new List<string>();
         private CustomUIElement _presetDropdown;
         private CustomUIElement _createPresetButton;
@@ -25,13 +24,13 @@ namespace ProbablyEdited
         private CustomUIElement _deletePresetButton;
         private CustomUIWindow _deletePresetWindow;
         private CustomUIElement _deletePresetErrorLabel;
-        private int _deletePresetSlot;
+        private string _deletePresetId;
         private string _deletePresetName = string.Empty;
         private PresetStatistics _deletePresetStatistics;
         private CustomUIWindow _renamePresetWindow;
         private CustomUIElement _renamePresetInput;
         private CustomUIElement _renamePresetErrorLabel;
-        private int _renamePresetSlot;
+        private string _renamePresetId;
         private string _renamePresetDraft = string.Empty;
         private CustomUIElement _presetStatusLabel;
         private CustomUIElement _pageSizeDropdown;
@@ -39,9 +38,9 @@ namespace ProbablyEdited
         private CustomUIElement _exportPresetDropdown;
         private CustomUIElement _exportButton;
         private CustomUIElement _exportStatisticsLabel;
-        private int _pageSize = 30;
-        private int _importTargetSlot;
-        private int _exportPresetSlot;
+        private int _pageSize = 100;
+        private string _importTargetPresetId;
+        private string _exportPresetId;
         private PresetImportPreview _importPreview;
 
         private void BuildPresetControls(CustomUIBuilder builder)
@@ -49,7 +48,7 @@ namespace ProbablyEdited
             builder.BeginRow(8f, UnityEngine.TextAnchor.MiddleLeft);
             builder.AddLabel("编辑预设");
             builder.Last.SetFixedWidth(112f);
-            builder.AddDropdown(BuildPresetCaptions(), GetPresetIndex(_controller.SelectedPresetSlot), OnPresetChanged, "preset");
+            builder.AddDropdown(BuildPresetCaptions(), GetPresetIndex(_controller.SelectedPresetId), OnPresetChanged, "preset");
             _presetDropdown = builder.Last;
             _presetDropdown.SetFixedWidth(235f);
             DisablePresetNameRichText(_presetDropdown);
@@ -104,24 +103,16 @@ namespace ProbablyEdited
 
         private List<string> BuildPresetCaptions()
         {
-            _presetSlots.Clear();
+            _presetIds.Clear();
             _presetCaptions.Clear();
             IReadOnlyList<PresetInfo> presets = _controller.Presets;
             for (int i = 0; presets != null && i < presets.Count; i++)
             {
                 PresetInfo preset = presets[i];
-                if (preset == null)
-                {
-                    continue;
-                }
-
-                _presetSlots.Add(preset.Slot);
-                string caption = _controller.GetPresetLabel(preset.Slot);
+                _presetIds.Add(preset.Id);
+                string caption = GetPresetLabel(presets, preset.Id);
                 if (preset.IsDirty)
-                {
                     caption += " · 未保存";
-                }
-
                 _presetCaptions.Add(caption);
             }
 
@@ -130,24 +121,30 @@ namespace ProbablyEdited
 
         private List<string> BuildImportTargetCaptions()
         {
-            _importTargetSlots.Clear();
+            _importTargetPresetIds.Clear();
             _importTargetCaptions.Clear();
             IReadOnlyList<PresetInfo> presets = _controller.Presets;
-            for (int slot = 1; slot <= PresetWorkspace.MaxSlots; slot++)
+            for (int i = 0; i < presets.Count; i++)
             {
-                PresetInfo existing = FindPreset(presets, slot);
-                _importTargetSlots.Add(slot);
-                string caption = existing == null ? PresetWorkspace.GetPresetName(slot) : _controller.GetPresetLabel(slot);
-                if (existing == null)
-                {
-                    caption += " · 空槽";
-                }
-                else if (existing.IsActive)
-                {
+                PresetInfo preset = presets[i];
+                _importTargetPresetIds.Add(preset.Id);
+                string caption = GetPresetLabel(presets, preset.Id);
+                if (preset.IsActive)
                     caption += " · 当前应用";
-                }
-
                 _importTargetCaptions.Add(caption);
+            }
+
+            if (_importTargetPresetId != null && FindPreset(presets, _importTargetPresetId) == null)
+                _importTargetPresetId = _controller.SelectedPresetId;
+
+            if (_controller.CanCreatePreset)
+            {
+                _importTargetPresetIds.Add(null);
+                _importTargetCaptions.Add("新建预设");
+            }
+            else if (_importTargetPresetId == null)
+            {
+                _importTargetPresetId = _controller.SelectedPresetId;
             }
 
             return _importTargetCaptions;
@@ -155,26 +152,21 @@ namespace ProbablyEdited
 
         private List<string> BuildExportPresetCaptions()
         {
-            _exportPresetSlots.Clear();
+            _exportPresetIds.Clear();
             _exportPresetCaptions.Clear();
             IReadOnlyList<PresetInfo> presets = _controller.Presets;
-            for (int i = 0; presets != null && i < presets.Count; i++)
+            for (int i = 0; i < presets.Count; i++)
             {
                 PresetInfo preset = presets[i];
-                if (preset == null)
-                {
-                    continue;
-                }
-
-                _exportPresetSlots.Add(preset.Slot);
-                string caption = _controller.GetPresetLabel(preset.Slot);
+                _exportPresetIds.Add(preset.Id);
+                string caption = GetPresetLabel(presets, preset.Id);
                 if (preset.IsActive)
-                {
                     caption += " · 当前应用";
-                }
-
                 _exportPresetCaptions.Add(caption);
             }
+
+            if (_exportPresetId == null || FindPreset(presets, _exportPresetId) == null)
+                _exportPresetId = _controller.SelectedPresetId;
 
             return _exportPresetCaptions;
         }
@@ -184,7 +176,7 @@ namespace ProbablyEdited
             if (_presetDropdown != null)
             {
                 _presetDropdown.SetOptions(BuildPresetCaptions());
-                _presetDropdown.SetIndex(GetPresetIndex(_controller.SelectedPresetSlot), false);
+                _presetDropdown.SetIndex(GetPresetIndex(_controller.SelectedPresetId), false);
             }
 
             _presetStatusLabel?.SetText(BuildPresetStatus());
@@ -192,7 +184,7 @@ namespace ProbablyEdited
             _renamePresetButton?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _pendingEntry == null);
             _deletePresetButton?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _controller.CanDeleteSelectedPreset && _pendingEntry == null);
             _deletePresetButton?.SetTooltip(BuildPresetDeletionTooltip());
-            _presetDropdown?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _presetSlots.Count > 1 && _pendingEntry == null);
+            _presetDropdown?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _presetIds.Count > 1 && _pendingEntry == null);
 
             if (_pageSizeDropdown != null)
             {
@@ -225,25 +217,25 @@ namespace ProbablyEdited
 
             _exportPresetDropdown.SetOptions(BuildExportPresetCaptions());
             _exportPresetDropdown.SetIndex(GetExportPresetIndex(), false);
-            _exportPresetDropdown.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _exportPresetSlots.Count > 0);
-            _exportButton?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _exportPresetSlots.Count > 0);
+            _exportPresetDropdown.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _exportPresetIds.Count > 0);
+            _exportButton?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _exportPresetIds.Count > 0);
             UpdateExportStatistics();
         }
 
-        private int GetPresetIndex(int slot)
+        private int GetPresetIndex(string presetId)
         {
-            return _presetSlots.IndexOf(slot);
+            return _presetIds.IndexOf(presetId);
         }
 
         private int GetImportTargetIndex()
         {
-            int index = _importTargetSlots.IndexOf(_importTargetSlot);
+            int index = _importTargetPresetIds.IndexOf(_importTargetPresetId);
             return index < 0 ? 0 : index;
         }
 
         private int GetExportPresetIndex()
         {
-            int index = _exportPresetSlots.IndexOf(_exportPresetSlot);
+            int index = _exportPresetIds.IndexOf(_exportPresetId);
             return index < 0 ? 0 : index;
         }
 
@@ -254,35 +246,53 @@ namespace ProbablyEdited
 
         private string BuildPresetStatus()
         {
-            return "当前应用：" + _controller.GetPresetLabel(_controller.ActivePresetSlot);
+            return "当前应用：" + GetPresetLabel(_controller.Presets, _controller.ActivePresetId);
         }
 
         private string BuildPresetDeletionTooltip()
         {
             if (_controller.Presets.Count == 1)
                 return "至少保留一个预设；先创建另一个预设并保存、应用后，才能删除当前预设。";
-            if (_controller.SelectedPresetSlot == _controller.ActivePresetSlot)
+            if (StringComparer.Ordinal.Equals(_controller.SelectedPresetId, _controller.ActivePresetId))
                 return "当前应用的预设不能删除；先保存并应用另一个预设后，才能删除当前预设。";
             return "删除所选非当前应用预设的草稿；仅在保存并应用后写入磁盘。";
         }
 
-        private string GetPresetName(int slot)
+        private string GetPresetName(string presetId)
         {
-            PresetInfo preset = FindPreset(_controller.Presets, slot);
-            return preset == null ? PresetWorkspace.GetPresetName(slot) : preset.Name;
+            return _controller.GetPresetName(presetId);
         }
 
-        private string GetPresetLabel(int slot)
+        private string GetPresetLabel(string presetId)
         {
-            PresetInfo preset = FindPreset(_controller.Presets, slot);
-            return preset == null ? PresetWorkspace.GetPresetName(slot) : _controller.GetPresetLabel(slot);
+            return GetPresetLabel(_controller.Presets, presetId);
         }
 
-        private static string GetPresetLabel(int slot, string name)
+        private static string GetPresetLabel(IReadOnlyList<PresetInfo> presets, string presetId)
         {
-            return StringComparer.Ordinal.Equals(name, PresetWorkspace.GetPresetName(slot))
-                ? name
-                : slot.ToString("00", CultureInfo.InvariantCulture) + " · " + name;
+            PresetInfo selected = FindPreset(presets, presetId);
+            if (selected == null)
+                return string.Empty;
+
+            int duplicateCount = 0;
+            int duplicateIndex = 0;
+            for (int i = 0; i < presets.Count; i++)
+            {
+                PresetInfo preset = presets[i];
+                if (!StringComparer.Ordinal.Equals(preset.Name, selected.Name))
+                    continue;
+
+                duplicateCount++;
+                if (StringComparer.Ordinal.Equals(preset.Id, presetId))
+                    duplicateIndex = duplicateCount;
+            }
+
+            if (duplicateCount == 1)
+                return selected.Name;
+
+            return selected.Name + " · 同名 " +
+                duplicateIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" +
+                duplicateCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
         private void DisablePresetNameRichText(CustomUIElement element)
         {
@@ -330,14 +340,12 @@ namespace ProbablyEdited
         }
 
 
-        private static PresetInfo FindPreset(IReadOnlyList<PresetInfo> presets, int slot)
+        private static PresetInfo FindPreset(IReadOnlyList<PresetInfo> presets, string presetId)
         {
             for (int i = 0; presets != null && i < presets.Count; i++)
             {
-                if (presets[i] != null && presets[i].Slot == slot)
-                {
+                if (presets[i] != null && StringComparer.Ordinal.Equals(presets[i].Id, presetId))
                     return presets[i];
-                }
             }
 
             return null;
@@ -345,25 +353,23 @@ namespace ProbablyEdited
 
         private void OnPresetChanged(int index)
         {
-            if (_controller.IsLoading || _saveApplyPending || index < 0 || index >= _presetSlots.Count)
+            if (_controller.IsLoading || _saveApplyPending || index < 0 || index >= _presetIds.Count)
             {
                 RefreshPresetControls();
                 return;
             }
 
-            int slot = _presetSlots[index];
-            if (slot == _controller.SelectedPresetSlot)
-            {
+            string presetId = _presetIds[index];
+            if (StringComparer.Ordinal.Equals(presetId, _controller.SelectedPresetId))
                 return;
-            }
 
             RefreshPresetControls();
-            TryCommitCurrentDraft(() => SelectPreset(slot), "切换预设");
+            TryCommitCurrentDraft(() => SelectPreset(presetId), "切换预设");
         }
 
-        private void SelectPreset(int slot)
+        private void SelectPreset(string presetId)
         {
-            _controller.SelectPreset(slot);
+            _controller.SelectPreset(presetId);
             RebindSelectedEntryToCurrentState();
             RefreshFilterOptions();
             RefreshDetail();
@@ -400,8 +406,8 @@ namespace ProbablyEdited
                 return;
             }
 
-            _renamePresetSlot = _controller.SelectedPresetSlot;
-            _renamePresetDraft = _controller.GetPresetName(_renamePresetSlot);
+            _renamePresetId = _controller.SelectedPresetId;
+            _renamePresetDraft = _controller.GetPresetName(_renamePresetId);
             CustomUIBuilder builder = CreateNativeSettingsWindow(RenamePresetWindowId, "重命名预设")
                 .UseMetaPrefabs()
                 .Center()
@@ -410,10 +416,12 @@ namespace ProbablyEdited
 
             builder.AddHeader("重命名所选预设");
             builder.AddLabel("保存并应用后，名称会写入本地预设工作区。");
-            builder.AddInput("预设名称", _renamePresetDraft, OnPresetRenameInputChanged, "preset_name", OnPresetRenameInputChanged);
+            builder.AddInput("预设名称", _renamePresetDraft, OnPresetRenameInputChanged, "preset_name");
             _renamePresetInput = builder.Last;
             _renamePresetInput.SetFixedWidth(420f);
             DisablePresetNameRichText(_renamePresetInput);
+            TextInputContextMenu.Attach(_renamePresetInput, _renamePresetId);
+            TextInputContextMenu.ResetHistory(_renamePresetInput, _renamePresetId);
             builder.AddLabel(string.Empty);
             _renamePresetErrorLabel = builder.Last;
             DisablePresetNameRichText(_renamePresetErrorLabel);
@@ -441,7 +449,7 @@ namespace ProbablyEdited
 
             try
             {
-                _controller.RenamePreset(_renamePresetSlot, _renamePresetDraft);
+                _controller.RenamePreset(_renamePresetId, _renamePresetDraft);
                 RefreshPresetControls();
                 RefreshMainStatus();
                 UpdateImportWindow();
@@ -467,7 +475,7 @@ namespace ProbablyEdited
             _renamePresetWindow = null;
             _renamePresetInput = null;
             _renamePresetErrorLabel = null;
-            _renamePresetSlot = 0;
+            _renamePresetId = null;
             _renamePresetDraft = string.Empty;
         }
 
@@ -481,9 +489,9 @@ namespace ProbablyEdited
                 return;
             }
 
-            _deletePresetSlot = _controller.SelectedPresetSlot;
-            _deletePresetName = _controller.GetPresetName(_deletePresetSlot);
-            _deletePresetStatistics = _controller.GetPresetStatistics(_deletePresetSlot);
+            _deletePresetId = _controller.SelectedPresetId;
+            _deletePresetName = _controller.GetPresetName(_deletePresetId);
+            _deletePresetStatistics = _controller.GetPresetStatistics(_deletePresetId);
             CustomUIBuilder builder = CreateNativeSettingsWindow(DeletePresetWindowId, "删除预设")
                 .UseMetaPrefabs()
                 .Center()
@@ -491,8 +499,7 @@ namespace ProbablyEdited
                 .OnClose(OnPresetDeletionWindowClosed);
 
             builder.AddHeader("确认删除预设");
-            builder.AddLabel("槽位 " + _deletePresetSlot.ToString("00", CultureInfo.InvariantCulture)
-                + " · 名称：“" + _deletePresetName + "”");
+            builder.AddLabel("名称：“" + GetPresetLabel(_deletePresetId) + "”");
             DisablePresetNameRichText(builder.Last);
             builder.AddLabel("现有内容：" + _deletePresetStatistics.OverrideCount + " 项修改 · "
                 + _deletePresetStatistics.LanguageCount + " 种语言 · "
@@ -522,10 +529,10 @@ namespace ProbablyEdited
 
             try
             {
-                PresetInfo current = FindPreset(_controller.Presets, _deletePresetSlot);
-                PresetStatistics statistics = current == null ? null : _controller.GetPresetStatistics(_deletePresetSlot);
+                PresetInfo current = FindPreset(_controller.Presets, _deletePresetId);
+                PresetStatistics statistics = current == null ? null : _controller.GetPresetStatistics(_deletePresetId);
                 if (current == null
-                    || _controller.SelectedPresetSlot != _deletePresetSlot
+                    || !StringComparer.Ordinal.Equals(_controller.SelectedPresetId, _deletePresetId)
                     || !StringComparer.Ordinal.Equals(current.Name, _deletePresetName)
                     || statistics.OverrideCount != _deletePresetStatistics.OverrideCount
                     || statistics.LanguageCount != _deletePresetStatistics.LanguageCount
@@ -534,11 +541,11 @@ namespace ProbablyEdited
                     throw new InvalidOperationException("预设在确认前已变化；请关闭此窗口并重新打开确认。");
                 }
 
-                _controller.DeletePreset(_deletePresetSlot);
+                _controller.DeletePreset(_deletePresetId);
                 _importPreview = null;
-                if (FindPreset(_controller.Presets, _exportPresetSlot) == null)
+                if (FindPreset(_controller.Presets, _exportPresetId) == null)
                 {
-                    _exportPresetSlot = _controller.SelectedPresetSlot;
+                    _exportPresetId = _controller.SelectedPresetId;
                     SetReadOnlyText(_exportResultInput, string.Empty);
                 }
 
@@ -548,8 +555,7 @@ namespace ProbablyEdited
                 RefreshRows();
                 RefreshPresetControls();
                 UpdateImportWindow();
-                RefreshMainStatus("已移除“槽位 " + _deletePresetSlot.ToString("00", CultureInfo.InvariantCulture)
-                    + " · " + _deletePresetName + "”；保存并应用后删除本地记录。");
+                RefreshMainStatus("已移除“" + _deletePresetName + "”；保存并应用后删除本地记录。");
                 ClosePresetDeletionWindow();
             }
             catch (Exception exception)
@@ -570,7 +576,7 @@ namespace ProbablyEdited
         {
             _deletePresetWindow = null;
             _deletePresetErrorLabel = null;
-            _deletePresetSlot = 0;
+            _deletePresetId = null;
             _deletePresetName = string.Empty;
             _deletePresetStatistics = null;
         }
@@ -591,37 +597,37 @@ namespace ProbablyEdited
 
         private void OnImportTargetChanged(int index)
         {
-            if (_saveApplyPending || index < 0 || index >= _importTargetSlots.Count)
+            if (_saveApplyPending || index < 0 || index >= _importTargetPresetIds.Count)
             {
                 return;
             }
 
-            _importTargetSlot = _importTargetSlots[index];
+            _importTargetPresetId = _importTargetPresetIds[index];
             _importPreview = null;
             UpdateImportWindow();
         }
 
         private void OnExportPresetChanged(int index)
         {
-            if (_saveApplyPending || index < 0 || index >= _exportPresetSlots.Count)
+            if (_saveApplyPending || index < 0 || index >= _exportPresetIds.Count)
             {
                 return;
             }
 
-            _exportPresetSlot = _exportPresetSlots[index];
+            _exportPresetId = _exportPresetIds[index];
             SetReadOnlyText(_exportResultInput, string.Empty);
             UpdateExportStatistics();
         }
 
         private void UpdateExportStatistics()
         {
-            if (_exportStatisticsLabel == null || _exportWindow == null || !_exportWindow.IsAlive || _exportPresetSlot <= 0)
+            if (_exportStatisticsLabel == null || _exportWindow == null || !_exportWindow.IsAlive || _exportPresetId == null)
             {
                 return;
             }
 
-            PresetStatistics statistics = _controller.GetPresetStatistics(_exportPresetSlot);
-            _exportStatisticsLabel.SetText("将导出“" + GetPresetLabel(_exportPresetSlot) + "”：" + statistics.OverrideCount + " 项修改 · "
+            PresetStatistics statistics = _controller.GetPresetStatistics(_exportPresetId);
+            _exportStatisticsLabel.SetText("将导出“" + GetPresetLabel(_exportPresetId) + "”：" + statistics.OverrideCount + " 项修改 · "
                 + statistics.LanguageCount + " 种语言 · " + statistics.SourceCount + " 个来源");
         }
 
@@ -645,7 +651,7 @@ namespace ProbablyEdited
             _deletePresetButton = null;
             _renamePresetInput = null;
             _renamePresetErrorLabel = null;
-            _renamePresetSlot = 0;
+            _renamePresetId = null;
             _renamePresetDraft = string.Empty;
             _presetStatusLabel = null;
             _pageSizeDropdown = null;

@@ -2,8 +2,8 @@
 <Manifest>
   <ID>probably_edited</ID>
   <Name>可能是改的 / Probably Edited</Name>
-  <Author>ProbablyEdited contributors</Author>
-  <ModVersion>1.3.0</ModVersion>
+  <Author>OctoberSama</Author>
+  <ModVersion>0.3.0</ModVersion>
   <Description>在模组设置中分类编辑游戏及已启用模组的本地化文本。最多36个可改名的多语言预设，红绿差异对照，单预设JSON分享。通过独立覆盖生效，不改写原文件。推荐安装“游戏内模组设置 / In-Game Mod Settings”，以便游玩时打开编辑器；未安装也可在主菜单独立使用：https://steamcommunity.com/sharedfiles/filedetails/?id=3834556946 / Edit localization with named multilingual presets and single-file sharing. In-Game Mod Settings is recommended for in-game access, not required to run.</Description>
   <GameVersions>
     <Version>0.46D</Version>

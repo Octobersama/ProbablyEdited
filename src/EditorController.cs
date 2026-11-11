@@ -31,8 +31,8 @@ namespace ProbablyEdited
 
         public EditorState State => workspace.State;
         public IReadOnlyList<PresetInfo> Presets => workspace.Presets;
-        public int SelectedPresetSlot => workspace.SelectedPresetSlot;
-        public int ActivePresetSlot => workspace.ActivePresetSlot;
+        public string SelectedPresetId => workspace.SelectedPresetId;
+        public string ActivePresetId => workspace.ActivePresetId;
         public bool HasUnsavedChanges => workspace.HasUnsavedChanges;
         public bool CanCreatePreset => workspace.CanCreatePreset;
         public bool CanDeleteSelectedPreset => workspace.CanDeleteSelectedPreset;
@@ -58,8 +58,6 @@ namespace ProbablyEdited
                 string workspaceJson = ReadOptionalFile(WorkspaceFile);
                 string legacyJson = workspaceJson == null ? ReadOptionalFile(LegacyActiveFile) : null;
                 workspace = PresetWorkspace.Load(workspaceJson, legacyJson);
-                if (workspace.RequiresWorkspaceMigration)
-                    PersistLegacyMigration();
             }
             catch (Exception error)
             {
@@ -74,32 +72,6 @@ namespace ProbablyEdited
             ModHelper.StartCoroutine(ModEntry.ModId, Guard(InitializeRoutine()));
         }
 
-        private void PersistLegacyMigration()
-        {
-            string migratedWorkspace = workspace.SerializeWorkspace();
-            try
-            {
-                ModHelper.WriteModDataFileText(ModEntry.ModId, PreviousWorkspaceFile, migratedWorkspace);
-                ModHelper.WriteModDataFileText(ModEntry.ModId, WorkspaceFile, migratedWorkspace);
-                workspace.MarkWorkspacePersisted();
-            }
-            catch (Exception error)
-            {
-                try
-                {
-                    ModHelper.DeleteModDataFile(ModEntry.ModId, WorkspaceFile);
-                }
-                catch (Exception rollback)
-                {
-                    storageReadable = false;
-                    log.Error("清理未完成的工作区迁移文件失败：" + rollback);
-                }
-
-                if (storageReadable)
-                    Status = "旧 active.json 已读取到预设01，但新工作区尚未写入；旧文件仍保留，可稍后重试保存。";
-                log.Error("迁移旧 active.json 失败：" + error);
-            }
-        }
 
         private IEnumerator InitializeRoutine()
         {
@@ -132,35 +104,36 @@ namespace ProbablyEdited
             StartPending();
         }
 
-        public void SelectPreset(int slot)
+        public void SelectPreset(string presetId)
         {
-            workspace.SelectPreset(slot);
+            workspace.SelectPreset(presetId);
             if (loadedLocales.Contains(SelectedLocale))
                 State.SetCatalog(catalog.Entries(SelectedLocale));
             else
                 Enqueue(SelectedLocale);
 
-            Status = "已选择“" + GetPresetLabel(slot) + "”；切换预设只改变编辑目标，不会立即应用。";
+            Status = "已选择“" + GetPresetLabel(presetId) + "”；切换预设只改变编辑目标，不会立即应用。";
             StartPending();
         }
 
-        public int CreatePreset()
+        public string CreatePreset()
         {
-            int slot = workspace.CreatePreset();
+            string presetId = workspace.CreatePreset();
             if (loadedLocales.Contains(SelectedLocale))
                 State.SetCatalog(catalog.Entries(SelectedLocale));
             else
                 Enqueue(SelectedLocale);
 
-            Status = "已新建“" + GetPresetLabel(slot) + "”；它从当前游戏与官方模组文本基线开始，不包含其他预设的修改。";
+            Status = "已新建“" + GetPresetLabel(presetId) + "”；它从当前游戏与官方模组文本基线开始，不包含其他预设的修改。";
             StartPending();
-            return slot;
+            return presetId;
         }
-        public void DeletePreset(int slot)
+
+        public void DeletePreset(string presetId)
         {
-            bool selectionChanged = workspace.SelectedPresetSlot == slot;
-            string label = GetPresetLabel(slot);
-            workspace.DeletePreset(slot);
+            bool selectionChanged = StringComparer.Ordinal.Equals(workspace.SelectedPresetId, presetId);
+            string label = GetPresetLabel(presetId);
+            workspace.DeletePreset(presetId);
             if (selectionChanged)
             {
                 if (loadedLocales.Contains(SelectedLocale))
@@ -172,29 +145,27 @@ namespace ProbablyEdited
             Status = "已移除“" + label + "”；点击“保存并应用”后删除本地记录。";
             StartPending();
         }
-        public string GetPresetName(int slot)
+
+        public string GetPresetName(string presetId)
         {
-            return workspace.GetPresetNameForSlot(slot);
+            return workspace.GetPresetName(presetId);
         }
 
-        public string GetPresetLabel(int slot)
+        public string GetPresetLabel(string presetId)
         {
-            string name = GetPresetName(slot);
-            return StringComparer.Ordinal.Equals(name, PresetWorkspace.GetPresetName(slot))
-                ? name
-                : slot.ToString("00", System.Globalization.CultureInfo.InvariantCulture) + " · " + name;
+            return GetPresetName(presetId);
         }
 
-        public void RenamePreset(int slot, string name)
+        public void RenamePreset(string presetId, string name)
         {
-            workspace.RenamePreset(slot, name);
-            Status = "已将“" + GetPresetLabel(slot) + "”重命名；保存并应用后写入工作区。";
+            workspace.RenamePreset(presetId, name);
+            Status = "已将“" + GetPresetLabel(presetId) + "”重命名；保存并应用后写入工作区。";
             Changed?.Invoke();
         }
 
-        public PresetStatistics GetPresetStatistics(int slot)
+        public PresetStatistics GetPresetStatistics(string presetId)
         {
-            return workspace.GetPresetStatistics(slot);
+            return workspace.GetPresetStatistics(presetId);
         }
 
         private void Enqueue(string code, bool reload = false)
@@ -267,7 +238,7 @@ namespace ProbablyEdited
                 if (!storageReadable)
                     Status = "现有预设工作区损坏，未覆盖它；请先修复 " + WorkspaceFile + "。";
                 else if (workspace.RequiresWorkspaceMigration)
-                    Status = "旧 active.json 已读取到预设01，但新工作区迁移未完成；旧文件仍保留，请重试保存。";
+                    Status = "已读取旧版预设数据，尚未迁移到工作区格式 v3；点击“保存并应用”后写入 v3。迁移前的文件保持不变。";
                 else
                     Status = "已读取 " + State.Entries.Count + " 条文本；当前预设覆盖 " + State.OverrideCount + " 条。自建或硬编码文本不在这些数据库中。";
             }
@@ -332,15 +303,15 @@ namespace ProbablyEdited
                 return;
             }
 
-            int targetSlot = workspace.SelectedPresetSlot;
+            string targetPresetId = workspace.SelectedPresetId;
             var locales = new HashSet<string>(StringComparer.Ordinal) { SelectedLocale };
-            foreach (string locale in workspace.GetPresetLocales(targetSlot))
+            foreach (string locale in workspace.GetPresetLocales(targetPresetId))
                 locales.Add(locale);
             foreach (string locale in workspace.GetActiveLocales())
                 locales.Add(locale);
 
             var apply = new PendingApply(
-                targetSlot,
+                targetPresetId,
                 workspace.SerializeForSaveAndApply(),
                 Snapshot(State.Overrides),
                 Snapshot(workspace.ActiveOverrides),
@@ -377,7 +348,7 @@ namespace ProbablyEdited
                 }
             }
 
-            if (workspace.SelectedPresetSlot != apply.TargetSlot ||
+            if (!StringComparer.Ordinal.Equals(workspace.SelectedPresetId, apply.TargetPresetId) ||
                 !StringComparer.Ordinal.Equals(workspace.SerializeForSaveAndApply(), apply.WorkspaceJson) ||
                 !AreEqual(workspace.ActiveOverrides, apply.PreviousOverrides))
             {
@@ -450,8 +421,8 @@ namespace ProbablyEdited
 
             workspace.MarkSavedAndApplied();
             pendingApply = null;
-            Status = "已保存并应用“" + GetPresetLabel(workspace.ActivePresetSlot) + "”：覆盖 " + workspace.State.OverrideCount + " 条。缓存文字可能需重开对应界面；未安装模组的条目会保留。";
-            log.Log("SAVED preset=" + workspace.ActivePresetSlot + " overrides=" + workspace.State.OverrideCount + " applied=" + applied + " locale=" + SelectedLocale);
+            Status = "已保存并应用“" + GetPresetLabel(workspace.ActivePresetId) + "”：覆盖 " + workspace.State.OverrideCount + " 条。缓存文字可能需重开对应界面；未安装模组的条目会保留。";
+            log.Log("SAVED preset=" + workspace.ActivePresetId + " overrides=" + workspace.State.OverrideCount + " applied=" + applied + " locale=" + SelectedLocale);
             Changed?.Invoke();
         }
 
@@ -503,7 +474,7 @@ namespace ProbablyEdited
             return files;
         }
 
-        public PresetImportPreview PreviewImport(string relativeFile, int targetSlot)
+        public PresetImportPreview PreviewImport(string relativeFile, string targetPresetId)
         {
             if (IsPrivateFile(relativeFile))
                 throw new InvalidOperationException("请选择分享文件，不要选择编辑器内部存储。");
@@ -512,7 +483,7 @@ namespace ProbablyEdited
 
             return workspace.PreviewImport(
                 ModHelper.ReadModDataFileText(ModEntry.ModId, relativeFile),
-                targetSlot,
+                targetPresetId,
                 GameVersion);
         }
 
@@ -524,11 +495,11 @@ namespace ProbablyEdited
             else
                 Enqueue(SelectedLocale);
 
-            Status = "修改文件已合并到“" + GetPresetLabel(workspace.SelectedPresetSlot) + "”草稿；检查后点击“保存并应用”。";
+            Status = "修改文件已合并到“" + GetPresetLabel(workspace.SelectedPresetId) + "”草稿；检查后点击“保存并应用”。";
             StartPending();
         }
 
-        public void Export(string fileName, int presetSlot)
+        public void Export(string fileName, string presetId)
         {
             string name = (fileName ?? string.Empty).Trim();
             if (name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
@@ -545,11 +516,11 @@ namespace ProbablyEdited
             if (ModHelper.ModDataFileExists(ModEntry.ModId, relative))
                 throw new InvalidOperationException("同名分享文件已存在，请换一个文件名以保留原文件。");
 
-            string json = workspace.ExportPresetJson(presetSlot, GameVersion);
+            string json = workspace.ExportPresetJson(presetId, GameVersion);
             ModHelper.WriteModDataFileText(ModEntry.ModId, relative, json);
-            PresetStatistics stats = workspace.GetPresetStatistics(presetSlot);
-            Status = "已导出“" + GetPresetLabel(presetSlot) + "”：修改 " + stats.OverrideCount + " 条、语言 " + stats.LanguageCount + " 种、来源 " + stats.SourceCount + " 个；" + DataFolder + "/" + relative;
-            log.Log("EXPORTED preset=" + presetSlot + " file=" + relative + " overrides=" + stats.OverrideCount);
+            PresetStatistics stats = workspace.GetPresetStatistics(presetId);
+            Status = "已导出“" + GetPresetLabel(presetId) + "”：修改 " + stats.OverrideCount + " 条、语言 " + stats.LanguageCount + " 种、来源 " + stats.SourceCount + " 个；" + DataFolder + "/" + relative;
+            log.Log("EXPORTED preset=" + presetId + " file=" + relative + " overrides=" + stats.OverrideCount);
             Changed?.Invoke();
         }
 
@@ -634,7 +605,7 @@ namespace ProbablyEdited
                 Enqueue(locale, reload: true);
             foreach (PresetInfo preset in workspace.Presets)
             {
-                foreach (string locale in workspace.GetPresetLocales(preset.Slot))
+                foreach (string locale in workspace.GetPresetLocales(preset.Id))
                     Enqueue(locale, reload: true);
             }
             StartPending();
@@ -665,20 +636,20 @@ namespace ProbablyEdited
 
         private sealed class PendingApply
         {
-            public int TargetSlot { get; }
+            public string TargetPresetId { get; }
             public string WorkspaceJson { get; }
             public Dictionary<TextId, string> SelectedOverrides { get; }
             public Dictionary<TextId, string> PreviousOverrides { get; }
             public HashSet<string> Locales { get; }
 
             public PendingApply(
-                int targetSlot,
+                string targetPresetId,
                 string workspaceJson,
                 Dictionary<TextId, string> selectedOverrides,
                 Dictionary<TextId, string> previousOverrides,
                 HashSet<string> locales)
             {
-                TargetSlot = targetSlot;
+                TargetPresetId = targetPresetId;
                 WorkspaceJson = workspaceJson;
                 SelectedOverrides = selectedOverrides;
                 PreviousOverrides = previousOverrides;

@@ -48,7 +48,7 @@ namespace ProbablyEdited
         private bool _awaitingLocale;
         private bool _saveApplyPending;
         private bool _saveApplyCallActive;
-        private int _displayedPresetSlot;
+        private string _displayedPresetId;
         private string _displayedLocale;
         private bool _hasDisplayedContext;
         private string _preservedSourceId;
@@ -71,6 +71,7 @@ namespace ProbablyEdited
         private readonly List<float> _rowBaseFontSizes = new List<float>();
         private readonly List<TextEntry> _rowEntries = new List<TextEntry>();
         private readonly List<CustomUIElement> _rowElements = new List<CustomUIElement>();
+        private readonly List<ResultRowSelection> _rowSelections = new List<ResultRowSelection>();
         private readonly List<TextMeshProUGUI> _rowTextCandidates = new List<TextMeshProUGUI>();
         private CustomUIElement _emptyResultsLabel;
         private List<string> _localeCodes = new List<string>();
@@ -262,6 +263,7 @@ namespace ProbablyEdited
             builder.AddInput("搜索文本或键…", _searchQuery, null, "search", OnSearchTyping);
             _searchInput = builder.Last;
             _searchInput.SetFlexible(1f, 0f);
+            TextInputContextMenu.Attach(_searchInput, "search");
             builder.End();
 
             builder.BeginRow(8f, TextAnchor.UpperLeft);
@@ -441,6 +443,7 @@ namespace ProbablyEdited
 
             element.SetPreferredSize(width, height);
             ResetInputToStart(element);
+            TextInputContextMenu.Attach(element, element.input, readOnly);
         }
 
         private static void ResetInputToStart(CustomUIElement element)
@@ -465,6 +468,7 @@ namespace ProbablyEdited
             element.SetString(value ?? string.Empty, false);
             ResetInputToStart(element);
             NativeFontSupport.Apply(element);
+            TextInputContextMenu.ResetHistory(element, element.input);
         }
 
         private void OnMainWindowClosed()
@@ -489,6 +493,7 @@ namespace ProbablyEdited
 
         private void CloseAuxiliaryWindows()
         {
+            TextInputContextMenu.CloseAll();
             ClosePresetRenameWindow();
             ClosePresetDeletionWindow();
             if (_importWindow != null && _importWindow.IsAlive) _importWindow.Close();
@@ -502,6 +507,7 @@ namespace ProbablyEdited
             _resultRowsHost = null;
             _rowEntries.Clear();
             _rowElements.Clear();
+            _rowSelections.Clear();
             _rowBaseFontSizes.Clear();
             _emptyResultsLabel = null;
             _localeDropdown = null;
@@ -1011,13 +1017,13 @@ namespace ProbablyEdited
         private bool IsDisplayContextCurrent()
         {
             return _hasDisplayedContext
-                && _displayedPresetSlot == _controller.SelectedPresetSlot
+                && _displayedPresetId == _controller.SelectedPresetId
                 && string.Equals(_displayedLocale, _controller.SelectedLocale, StringComparison.Ordinal);
         }
 
         private void RememberDisplayContext()
         {
-            _displayedPresetSlot = _controller.SelectedPresetSlot;
+            _displayedPresetId = _controller.SelectedPresetId;
             _displayedLocale = _controller.SelectedLocale;
             _hasDisplayedContext = true;
         }
@@ -1111,6 +1117,7 @@ namespace ProbablyEdited
 
                             _rowEntries.Add(null);
                             _rowElements.Add(row);
+                            _rowSelections.Add(new ResultRowSelection(row.root));
                             _rowBaseFontSizes.Add(row.text != null ? row.text.fontSize : 0f);
                         }
                         else
@@ -1221,9 +1228,9 @@ namespace ProbablyEdited
         {
             string preview = PreviewText(GetDisplayedText(entry), 64);
             StringBuilder text = new StringBuilder(preview.Length + 16);
-            if (IsSelected(entry))
+            if (IsSelected(entry) && HasDraftChanges())
             {
-                text.Append("> ");
+                text.Append("* ");
             }
 
             text.Append(preview);
@@ -1266,6 +1273,7 @@ namespace ProbablyEdited
 
         private void SetRowText(CustomUIElement row, int rowIndex, TextEntry entry)
         {
+            _rowSelections[rowIndex].SetSelected(IsSelected(entry));
             string text = BuildRowText(entry);
             if (row.text == null || !string.Equals(row.text.text, text, StringComparison.Ordinal))
             {
@@ -1414,6 +1422,8 @@ namespace ProbablyEdited
             if (_replacementInput != null)
             {
                 NativeFontSupport.Apply(_replacementInput);
+                TextInputContextMenu.ResetHistory(_replacementInput,
+                    _selectedEntry == null ? null : (object)(_controller.SelectedPresetId, _selectedEntry.Id));
             }
             RefreshDiff();
         }
@@ -1525,7 +1535,7 @@ namespace ProbablyEdited
 
         private void BeginSaveAndApply()
         {
-            if (!_controller.HasUnsavedChanges && _controller.SelectedPresetSlot == _controller.ActivePresetSlot)
+            if (!_controller.HasUnsavedChanges && _controller.SelectedPresetId == _controller.ActivePresetId)
             {
                 RefreshMainStatus("工作区没有未保存修改，所选预设也已应用。");
                 return;
@@ -1580,7 +1590,7 @@ namespace ProbablyEdited
             }
 
             bool failed = _controller.HasUnsavedChanges
-                || _controller.SelectedPresetSlot != _controller.ActivePresetSlot;
+                || _controller.SelectedPresetId != _controller.ActivePresetId;
             RefreshPresetControls();
             SetMainControlsInteractable(true);
             UpdateImportWindow();
@@ -1874,7 +1884,7 @@ namespace ProbablyEdited
         {
             return !_saveApplyPending
                 && (_controller.HasUnsavedChanges
-                    || _controller.SelectedPresetSlot != _controller.ActivePresetSlot
+                    || _controller.SelectedPresetId != _controller.ActivePresetId
                     || HasDraftChanges());
         }
 
@@ -1952,7 +1962,7 @@ namespace ProbablyEdited
             }
 
             _overwriteImportConflicts = false;
-            _importTargetSlot = _controller.SelectedPresetSlot;
+            _importTargetPresetId = _controller.SelectedPresetId;
             _importPreview = null;
             RefreshImportFileList();
             CustomUIBuilder builder = CreateNativeSettingsWindow(ImportWindowId, "合并导入")
@@ -2105,11 +2115,11 @@ namespace ProbablyEdited
 
             StringBuilder summary = new StringBuilder();
             summary.Append("目标：").Append(preview.CreatesPreset
-                ? GetPresetLabel(preview.TargetSlot, preview.PresetName)
-                : GetPresetLabel(preview.TargetSlot));
+                ? "新建预设 · " + preview.PresetName
+                : GetPresetLabel(preview.TargetPresetId));
             if (preview.CreatesPreset)
             {
-                summary.Append("（确认后创建空槽）");
+                summary.Append("（确认后创建）");
             }
 
             summary.Append('\n');
@@ -2140,7 +2150,7 @@ namespace ProbablyEdited
 
             try
             {
-                _importPreview = _controller.PreviewImport(_importFiles[GetImportFileIndex()], _importTargetSlot);
+                _importPreview = _controller.PreviewImport(_importFiles[GetImportFileIndex()], _importTargetPresetId);
                 UpdateImportWindow();
             }
             catch (Exception exception)
@@ -2173,7 +2183,7 @@ namespace ProbablyEdited
                 {
                     _controller.ConfirmImport(_importPreview, _overwriteImportConflicts);
                     _importPreview = null;
-                    _importTargetSlot = _controller.SelectedPresetSlot;
+                    _importTargetPresetId = _controller.SelectedPresetId;
                     RebindSelectedEntryToCurrentState();
                     RefreshFilterOptions();
                     RefreshDetail();
@@ -2198,7 +2208,7 @@ namespace ProbablyEdited
                 return;
             }
 
-            _exportPresetSlot = _controller.SelectedPresetSlot;
+            _exportPresetId = _controller.SelectedPresetId;
             CustomUIBuilder builder = CreateNativeSettingsWindow(ExportWindowId, "导出一个预设")
                 .UseMetaPrefabs()
                 .Center()
@@ -2216,6 +2226,7 @@ namespace ProbablyEdited
             BuildExportPresetControls(builder);
             builder.AddLabel("文件名（不含 .json）：");
             builder.AddInput("例如 zh_patch", _exportName, OnExportNameChanged, "export_name", OnExportNameChanged);
+            TextInputContextMenu.Attach(builder.Last, "export_name");
             builder.AddLabel("结果 / 输出路径");
             builder.AddInput("导出后显示控制器返回的完整路径", string.Empty, null, "export_result");
             _exportResultInput = builder.Last;
@@ -2249,7 +2260,7 @@ namespace ProbablyEdited
         {
             try
             {
-                _controller.Export(_exportName, _exportPresetSlot);
+                _controller.Export(_exportName, _exportPresetId);
                 UpdateExportStatistics();
                 SetReadOnlyText(_exportResultInput, ValueOrFallback(_controller.Status, "导出完成。"));
                 RefreshMainStatus();

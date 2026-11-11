@@ -3,19 +3,20 @@ using System.Collections.Generic;
 using System.IO;
 using ProbablyEdited;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 
 internal static class Program
 {
     private static int Main()
     {
         int failures = 0;
-        Run("fresh workspaces save and apply slot 01", FreshWorkspaceCanSave, ref failures);
+        Run("fresh workspaces save and apply a stable preset ID", FreshWorkspaceCanSave, ref failures);
         Run("rename-only changes save and reload without override edits", RenameOnlyChangesSaveAndReload, ref failures);
         Run("legacy active data migrates with all languages intact", MigratesLegacyActive, ref failures);
         Run("corrupt workspace never falls back to legacy active data", CorruptWorkspaceIsProtected, ref failures);
         Run("switching active presets preloads every required language", InactivePresetPreloadsEveryLanguage, ref failures);
         Run("single-preset export imports into the selected target with conflict choices", SharesOnePresetIntoTarget, ref failures);
-        Run("deleting saved slot 01 preserves retryability and reloads", DeletingSavedSlotOneIsRetryable, ref failures);
+        Run("deleting a saved inactive preset preserves retryability and reloads", DeletingSavedPresetIsRetryable, ref failures);
         Run("runtime apply failure rolls back disk and runtime independently", FailedApplyRestoresWorkspace, ref failures);
         Run("failed first workspace write removes its partial file", FailedFirstWorkspaceWrite, ref failures);
         Run("runtime rollback still runs when disk rollback fails", RuntimeRollbackSurvivesDiskRollbackFailure, ref failures);
@@ -34,15 +35,17 @@ internal static class Program
             {
                 string workspacePath = Path.Combine(root, "presets.json");
                 Ensure(!File.Exists(workspacePath), "Initialize created a workspace before a user save.");
-                Equal(1, controller.SelectedPresetSlot, "A fresh workspace did not select slot 01.");
-                Equal(1, controller.ActivePresetSlot, "A fresh workspace did not start with slot 01 active.");
+                string presetId = controller.SelectedPresetId;
+                Ensure(!string.IsNullOrWhiteSpace(presetId), "A fresh workspace did not assign a preset ID.");
+                Equal(presetId, controller.ActivePresetId, "A fresh workspace did not start with its selected preset active.");
 
                 controller.State.Stage(entry, "first saved replacement");
                 controller.SaveAndApply();
 
-                Ensure(File.Exists(workspacePath), "The first save did not create presets.json.");
+                Ensure(File.Exists(workspacePath), "The first save did not create presets.json. Status: " + controller.Status);
                 Ensure(!controller.HasUnsavedChanges, "A successful first save left workspace drafts dirty.");
                 var saved = PresetWorkspace.Load(File.ReadAllText(workspacePath), null);
+                Equal(presetId, saved.ActivePresetId, "The first save changed the preset ID.");
                 Equal("first saved replacement", saved.State.Overrides[entry.Id], "The first save did not persist the staged value.");
                 Equal("first saved replacement", GameTextCatalog.Latest.AppliedValues[entry.Id], "The first save did not apply the value to runtime state.");
             }
@@ -57,17 +60,19 @@ internal static class Program
         string root = NewStore();
         const string originalV1 = "{\"schema\":\"probably-edited-workspace\",\"schemaVersion\":1,\"activeSlot\":1,\"presets\":[{\"slot\":1,\"overrides\":[]}]}";
         string workspacePath = Path.Combine(root, "presets.json");
+        string presetId = null;
         try
         {
             File.WriteAllText(workspacePath, originalV1);
             using (EditorController controller = Open(root))
             {
-                Equal("预设01", controller.GetPresetName(1), "A v1 workspace did not load its default name.");
-                Ensure(!controller.HasUnsavedChanges, "Loading a v1 workspace marked it dirty before user changes.");
+                presetId = controller.SelectedPresetId;
+                Equal("预设01", controller.GetPresetName(presetId), "A v1 workspace did not load its initial display name.");
+                Ensure(controller.HasUnsavedChanges, "A v1 workspace was not marked for deferred migration.");
                 Equal(originalV1, File.ReadAllText(workspacePath), "Loading a v1 workspace rewrote it during startup.");
 
-                controller.RenamePreset(1, "  夜航  ");
-                Equal("夜航", controller.GetPresetName(1), "The controller did not expose the normalized preset name.");
+                controller.RenamePreset(presetId, "  夜航  ");
+                Equal("夜航", controller.GetPresetName(presetId), "The controller did not normalize the preset name.");
                 Ensure(controller.HasUnsavedChanges, "A controller-only rename was not marked dirty.");
 
                 ModHelper.FailNextWrite("presets.previous.json", afterPartialWrite: false);
@@ -78,12 +83,18 @@ internal static class Program
                 controller.SaveAndApply();
                 Ensure(!controller.HasUnsavedChanges, "Saving a name-only change left the workspace dirty.");
                 PresetWorkspace saved = PresetWorkspace.Load(File.ReadAllText(workspacePath), null);
-                Equal("夜航", saved.Presets[0].Name, "The controller save did not persist the renamed slot.");
+                Equal(presetId, saved.ActivePresetId, "The v1 migration changed the new stable ID during save.");
+                Equal("夜航", saved.GetPresetName(presetId), "The controller save did not persist the renamed preset.");
+                Equal(3, JObject.Parse(File.ReadAllText(workspacePath)).Value<int>("schemaVersion"), "A normal save did not write workspace schema v3.");
                 Equal(originalV1, File.ReadAllText(Path.Combine(root, "presets.previous.json")), "Saving v1 data did not preserve the original workspace backup.");
             }
 
             using (EditorController restarted = Open(root))
-                Equal("夜航", restarted.GetPresetName(1), "Restarting the controller lost the renamed slot name.");
+            {
+                PresetInfo preset = restarted.Presets[0];
+                Equal("夜航", restarted.GetPresetName(preset.Id), "Restarting the controller lost the renamed preset name.");
+                Equal(presetId, preset.Id, "Restarting changed the persisted preset ID.");
+            }
         }
         finally
         {
@@ -101,25 +112,36 @@ internal static class Program
         legacyState.Stage(french, "Texte historique");
         string legacyJson = legacyState.ExportJson(PlayerStore.VERSION);
         string legacyPath = Path.Combine(root, "active.json");
+        string legacyBackupPath = Path.Combine(root, "previous.json");
+        string workspaceBackupPath = Path.Combine(root, "presets.previous.json");
+        const string legacyBackup = "legacy active backup stays unchanged";
+        const string workspaceBackup = "existing workspace backup stays unchanged";
         try
         {
             File.WriteAllText(legacyPath, legacyJson);
+            File.WriteAllText(legacyBackupPath, legacyBackup);
+            File.WriteAllText(workspaceBackupPath, workspaceBackup);
             using (EditorController controller = Open(root, english, french))
             {
-                Ensure(!controller.HasUnsavedChanges, "A successfully migrated workspace was left dirty.");
-                Ensure(File.Exists(Path.Combine(root, "presets.json")), "Legacy active data was not persisted as a workspace on first load.");
-                Equal("Legacy English replacement", GameTextCatalog.Latest.AppliedValues[english.Id], "Migration lost the English legacy override.");
-                Equal("Texte historique", GameTextCatalog.Latest.AppliedValues[french.Id], "Migration did not load and apply the French legacy override.");
-                Ensure(GameTextCatalog.Latest.LoadCalls.Contains("fr"), "Migration did not preload the legacy French locale.");
-                Equal(1, controller.Presets.Count, "Migration did not place legacy data in exactly slot 01.");
-                Equal(1, controller.Presets[0].Slot, "Legacy data migrated to the wrong slot.");
+                Ensure(controller.HasUnsavedChanges, "Legacy active data was not marked for deferred migration.");
+                Ensure(!File.Exists(Path.Combine(root, "presets.json")), "Initialize rewrote legacy active data before user save.");
+                Equal("Legacy English replacement", GameTextCatalog.Latest.AppliedValues[english.Id], "Loading legacy active data lost the English override.");
+                Equal("Texte historique", GameTextCatalog.Latest.AppliedValues[french.Id], "Loading legacy active data lost the French override.");
+                Ensure(GameTextCatalog.Latest.LoadCalls.Contains("fr"), "Initialization did not preload the legacy French locale.");
+                Equal(1, controller.Presets.Count, "Legacy active data did not load as exactly one preset.");
+                string presetId = controller.Presets[0].Id;
+                Equal("预设01", controller.Presets[0].Name, "Legacy active data did not retain the initial display name.");
+                Equal(presetId, controller.ActivePresetId, "Legacy active data did not remain the active preset.");
 
                 controller.SaveAndApply();
 
-                Equal(legacyJson, File.ReadAllText(legacyPath), "Migration modified or removed legacy recovery data.");
-                var workspace = PresetWorkspace.Load(File.ReadAllText(Path.Combine(root, "presets.json")), null);
-                Equal(2, workspace.GetPresetStatistics(1).LanguageCount, "Migrated workspace did not retain both legacy languages.");
-                Equal("Texte historique", workspace.State.Overrides[french.Id], "Migrated workspace changed the French locale identity or text.");
+                Equal(legacyJson, File.ReadAllText(legacyPath), "Saving migration modified legacy recovery data.");
+                Equal(legacyBackup, File.ReadAllText(legacyBackupPath), "Saving migration modified the legacy backup.");
+                Equal(workspaceBackup, File.ReadAllText(workspaceBackupPath), "Saving migration overwrote the existing workspace backup.");
+                PresetWorkspace workspace = PresetWorkspace.Load(File.ReadAllText(Path.Combine(root, "presets.json")), null);
+                Equal(presetId, workspace.ActivePresetId, "Saving migration changed the generated ID.");
+                Equal(2, workspace.GetPresetStatistics(presetId).LanguageCount, "Migrated workspace did not retain both locales.");
+                Equal("Texte historique", workspace.State.Overrides[french.Id], "Migration changed the French locale identity or text.");
             }
         }
         finally
@@ -166,7 +188,8 @@ internal static class Program
         var seed = new PresetWorkspace();
         seed.State.Stage(english, "Active English");
         seed.MarkSavedAndApplied();
-        Equal(2, seed.CreatePreset(), "The second preset did not receive stable slot ID 02.");
+        string activeId = seed.ActivePresetId;
+        string secondId = seed.CreatePreset();
         seed.State.Stage(french, "Draft French");
         seed.State.Stage(korean, "Draft Korean");
         File.WriteAllText(Path.Combine(root, "presets.json"), seed.SerializeWorkspace());
@@ -179,20 +202,20 @@ internal static class Program
                 Ensure(!GameTextCatalog.Latest.LoadCalls.Contains("ko"), "Restart eagerly loaded another inactive preset language.");
                 Equal("Active English", GameTextCatalog.Latest.AppliedValues[english.Id], "Restart did not apply the saved active preset.");
 
-                controller.SelectPreset(2);
-                Equal(1, controller.ActivePresetSlot, "Browsing slot 02 changed the active slot.");
-                Equal("Active English", GameTextCatalog.Latest.AppliedValues[english.Id], "Browsing slot 02 applied its draft prematurely.");
+                controller.SelectPreset(secondId);
+                Equal(activeId, controller.ActivePresetId, "Browsing the second preset changed the active identity.");
+                Equal("Active English", GameTextCatalog.Latest.AppliedValues[english.Id], "Browsing an inactive preset applied its draft prematurely.");
                 controller.SaveAndApply();
 
                 Ensure(GameTextCatalog.Latest.LoadCalls.Contains("fr"), "SaveAndApply did not load the selected preset's French bindings.");
                 Ensure(GameTextCatalog.Latest.LoadCalls.Contains("ko"), "SaveAndApply did not load the selected preset's Korean bindings.");
-                Equal(2, controller.ActivePresetSlot, "Successful SaveAndApply did not activate slot 02.");
+                Equal(secondId, controller.ActivePresetId, "Successful SaveAndApply did not activate the selected ID.");
                 Ensure(!GameTextCatalog.Latest.AppliedValues.ContainsKey(english.Id), "Switching presets left the previous English override active.");
                 Equal("Draft French", GameTextCatalog.Latest.AppliedValues[french.Id], "The new French override was not applied.");
                 Equal("Draft Korean", GameTextCatalog.Latest.AppliedValues[korean.Id], "The new Korean override was not applied.");
 
                 int lastApply = GameTextCatalog.Latest.ApplySnapshots.Count - 1;
-                Ensure(GameTextCatalog.Latest.ApplySnapshots[lastApply - 1].ContainsKey(english.Id), "The prior active overlay was not restored before applying slot 02.");
+                Ensure(GameTextCatalog.Latest.ApplySnapshots[lastApply - 1].ContainsKey(english.Id), "The prior active overlay was not restored before applying the selected preset.");
                 Ensure(GameTextCatalog.Latest.ApplySnapshots[lastApply].ContainsKey(french.Id), "The final runtime snapshot omitted the French override.");
                 Ensure(GameTextCatalog.Latest.ApplySnapshots[lastApply].ContainsKey(korean.Id), "The final runtime snapshot omitted the Korean override.");
                 IReadOnlyList<string> loadedAtFinalApply = GameTextCatalog.Latest.LoadedLocalesAtApply[lastApply];
@@ -201,7 +224,7 @@ internal static class Program
 
             using (EditorController restarted = Open(root, english, french, korean))
             {
-                Equal(2, restarted.ActivePresetSlot, "Restart did not restore the newly saved active slot.");
+                Equal(secondId, restarted.ActivePresetId, "Restart did not restore the newly saved active ID.");
                 Equal("Draft French", GameTextCatalog.Latest.AppliedValues[french.Id], "Restart lost the active French override.");
                 Equal("Draft Korean", GameTextCatalog.Latest.AppliedValues[korean.Id], "Restart lost the active Korean override.");
             }
@@ -223,16 +246,17 @@ internal static class Program
         {
             using (EditorController controller = Open(root, conflict, incomingFrench, unrelatedKorean, staleEntry))
             {
+                string sourceId = controller.SelectedPresetId;
                 controller.State.Stage(conflict, "incoming conflict");
                 controller.State.Stage(incomingFrench, "incoming French");
                 controller.SaveAndApply();
 
-                Equal(2, controller.CreatePreset(), "The target preset did not use slot 02.");
+                string targetId = controller.CreatePreset();
                 controller.State.Stage(conflict, "local conflict");
                 controller.State.Stage(unrelatedKorean, "keep unrelated value");
-                controller.RenamePreset(1, "Controller source");
-                controller.RenamePreset(2, "Controller target");
-                controller.Export("source-preset", 1);
+                controller.RenamePreset(sourceId, "Controller source");
+                controller.RenamePreset(targetId, "Controller target");
+                controller.Export("source-preset", sourceId);
 
                 string sharePath = Path.Combine(root, "exports", "source-preset.json");
                 string shareJson = File.ReadAllText(sharePath);
@@ -243,9 +267,11 @@ internal static class Program
                 Ensure(!shareJson.Contains("keep unrelated value", StringComparison.Ordinal), "The export included an unrelated preset override.");
                 Ensure(!shareJson.Contains("Conflict baseline", StringComparison.Ordinal), "The export included original baseline text.");
                 File.WriteAllText(Path.Combine(root, "exports", "workspace-schema.json"), File.ReadAllText(Path.Combine(root, "presets.json")));
-                Throws<NotSupportedException>(() => controller.PreviewImport("exports/workspace-schema.json", 5));
+                Throws<NotSupportedException>(() => controller.PreviewImport("exports/workspace-schema.json", null));
 
-                PresetImportPreview preview = controller.PreviewImport("exports/source-preset.json", 2);
+                PresetImportPreview preview = controller.PreviewImport("exports/source-preset.json", targetId);
+                Equal(targetId, preview.TargetPresetId, "The preview did not retain the selected existing target ID.");
+                Ensure(!preview.CreatesPreset, "Importing into a named preset previewed creation.");
                 Equal("Controller target", preview.PresetName, "The import preview did not preserve the existing target name.");
                 Equal(2, preview.Incoming.OverrideCount, "Incoming stats did not count the chosen preset's overrides.");
                 Equal(2, preview.Incoming.LanguageCount, "Incoming language stats did not include all languages.");
@@ -258,32 +284,33 @@ internal static class Program
                 string activeConflictBeforeImport = GameTextCatalog.Latest.AppliedValues[conflict.Id];
                 string activeFrenchBeforeImport = GameTextCatalog.Latest.AppliedValues[incomingFrench.Id];
                 controller.ConfirmImport(preview, overwriteConflicts: false);
-                Equal("Controller target", controller.Presets[1].Name, "Importing into an existing slot changed its chosen name.");
+                Equal("Controller target", controller.Presets[1].Name, "Importing into an existing preset changed its chosen name.");
                 Equal("local conflict", controller.State.Overrides[conflict.Id], "A keep-conflicts import replaced the target value.");
                 Equal("incoming French", controller.State.Overrides[incomingFrench.Id], "A non-conflicting language was not merged into the target.");
                 Equal("keep unrelated value", controller.State.Overrides[unrelatedKorean.Id], "Import discarded an unrelated target override.");
-                Equal(1, controller.ActivePresetSlot, "Importing into slot 02 changed the active slot.");
+                Equal(sourceId, controller.ActivePresetId, "Importing into an inactive preset changed active identity.");
                 Equal(activeConflictBeforeImport, GameTextCatalog.Latest.AppliedValues[conflict.Id], "Import applied the target conflict to runtime immediately.");
                 Equal(activeFrenchBeforeImport, GameTextCatalog.Latest.AppliedValues[incomingFrench.Id], "Import applied a non-conflicting target draft to runtime immediately.");
 
-                PresetImportPreview stale = controller.PreviewImport("exports/source-preset.json", 2);
+                PresetImportPreview stale = controller.PreviewImport("exports/source-preset.json", targetId);
                 controller.State.Stage(staleEntry, "changed after preview");
                 Throws<InvalidOperationException>(() => controller.ConfirmImport(stale, overwriteConflicts: true));
                 Equal("changed after preview", controller.State.Overrides[staleEntry.Id], "Rejecting a stale preview changed the target draft.");
 
-                PresetImportPreview overwrite = controller.PreviewImport("exports/source-preset.json", 2);
+                PresetImportPreview overwrite = controller.PreviewImport("exports/source-preset.json", targetId);
                 controller.ConfirmImport(overwrite, overwriteConflicts: true);
                 Equal("incoming conflict", controller.State.Overrides[conflict.Id], "Explicit overwrite did not replace the target conflict.");
 
-                PresetImportPreview emptyTarget = controller.PreviewImport("exports/source-preset.json", 3);
-                Ensure(emptyTarget.CreatesPreset, "Importing into an empty slot did not preview creation.");
-                Equal(0, emptyTarget.Existing.OverrideCount, "An empty target reported existing overrides.");
-                controller.ConfirmImport(emptyTarget, overwriteConflicts: false);
-                Equal("Controller source", emptyTarget.PresetName, "The empty-slot preview did not adopt the v2 share name.");
-                Equal(3, controller.SelectedPresetSlot, "Confirmed import did not select its chosen target slot.");
-                Equal(1, controller.ActivePresetSlot, "Confirmed import activated the target without SaveAndApply.");
-                Equal(2, controller.GetPresetStatistics(3).OverrideCount, "Confirmed import did not create the target with incoming data.");
-                Equal("Controller source", controller.Presets[2].Name, "Importing into an empty slot did not adopt the v2 share name.");
+                PresetImportPreview newTarget = controller.PreviewImport("exports/source-preset.json", null);
+                Ensure(newTarget.CreatesPreset && newTarget.TargetPresetId == null, "The explicit new preset target was not previewed as creation.");
+                Equal(2, controller.Presets.Count, "Previewing a new import created a preset before confirmation.");
+                controller.ConfirmImport(newTarget, overwriteConflicts: false);
+                string importedId = controller.SelectedPresetId;
+                Equal("Controller source", newTarget.PresetName, "A new-target preview did not adopt the v2 share name.");
+                Ensure(!StringComparer.Ordinal.Equals(importedId, sourceId) && !StringComparer.Ordinal.Equals(importedId, targetId), "Confirming a new import did not allocate a distinct ID.");
+                Equal(sourceId, controller.ActivePresetId, "Confirming a new import changed active identity before SaveAndApply.");
+                Equal(2, controller.GetPresetStatistics(importedId).OverrideCount, "Confirmed import did not create the target with incoming data.");
+                Equal("Controller source", controller.GetPresetName(importedId), "A new imported preset did not retain the share name.");
 
                 File.WriteAllText(Path.Combine(root, "active.json"), "legacy internal data");
                 File.WriteAllText(Path.Combine(root, "previous.json"), "legacy internal backup");
@@ -298,11 +325,11 @@ internal static class Program
                 legacyPatch.Stage(incomingFrench, "legacy v1 value");
                 Directory.CreateDirectory(Path.Combine(root, "exports"));
                 File.WriteAllText(Path.Combine(root, "exports", "legacy-v1.json"), legacyPatch.ExportJson(PlayerStore.VERSION));
-                PresetImportPreview legacyPreview = controller.PreviewImport("exports/legacy-v1.json", 4);
+                PresetImportPreview legacyPreview = controller.PreviewImport("exports/legacy-v1.json", null);
                 Equal(1, legacyPreview.Incoming.OverrideCount, "A 1.0 share file was not previewed as one modification.");
                 controller.ConfirmImport(legacyPreview, overwriteConflicts: true);
                 Equal("legacy v1 value", controller.State.Overrides[incomingFrench.Id], "A 1.0 share file did not import its original data.");
-                Equal("预设04", controller.Presets[3].Name, "Importing a v1 share into an empty slot did not use its default name.");
+                Equal("预设04", controller.GetPresetName(controller.SelectedPresetId), "An unnamed v1 share did not receive a generated display name.");
             }
         }
         finally
@@ -311,52 +338,54 @@ internal static class Program
         }
     }
 
-    private static void DeletingSavedSlotOneIsRetryable()
+    private static void DeletingSavedPresetIsRetryable()
     {
         string root = NewStore();
-        TextEntry entry = Entry("game", "en", "delete-slot-one", "original baseline");
+        TextEntry entry = Entry("game", "en", "delete-preset", "original baseline");
         string workspacePath = Path.Combine(root, "presets.json");
+        string secondId = null;
         try
         {
             using (EditorController controller = Open(root, entry))
             {
-                controller.State.Stage(entry, "slot 01 saved value");
+                string firstId = controller.SelectedPresetId;
+                controller.State.Stage(entry, "first preset saved value");
                 controller.SaveAndApply();
-                Equal(2, controller.CreatePreset(), "The second preset did not use slot 02.");
-                controller.State.Stage(entry, "slot 02 saved value");
+                secondId = controller.CreatePreset();
+                controller.State.Stage(entry, "second preset saved value");
                 controller.SaveAndApply();
-                Equal(2, controller.ActivePresetSlot, "Saving slot 02 did not make it active.");
+                Equal(secondId, controller.ActivePresetId, "Saving the second preset did not make its ID active.");
 
-                controller.SelectPreset(1);
+                controller.SelectPreset(firstId);
                 string previousWorkspace = File.ReadAllText(workspacePath);
-                controller.DeletePreset(1);
+                controller.DeletePreset(firstId);
 
-                Equal(2, controller.SelectedPresetSlot, "Deleting selected slot 01 did not fall back to the active slot.");
-                Equal(2, controller.ActivePresetSlot, "Deleting slot 01 changed the active slot.");
-                Equal("slot 02 saved value", controller.State.GetText(entry), "The selected fallback was not rebound to slot 02's catalog and values.");
-                Ensure(controller.HasUnsavedChanges, "Deleting a saved slot did not leave a dirty workspace draft.");
-                Equal(1, controller.Presets.Count, "Deleting slot 01 left it in the controller's preset list.");
+                Equal(secondId, controller.SelectedPresetId, "Deleting the selected inactive preset did not fall back to the active ID.");
+                Equal(secondId, controller.ActivePresetId, "Deleting an inactive preset changed active identity.");
+                Equal("second preset saved value", controller.State.GetText(entry), "The active fallback did not restore its saved state.");
+                Ensure(controller.HasUnsavedChanges, "Deleting a saved preset did not leave a dirty workspace draft.");
+                Equal(1, controller.Presets.Count, "Deleting the inactive preset left it in the controller's list.");
 
                 ModHelper.FailNextWrite("presets.json", afterPartialWrite: true);
                 controller.SaveAndApply();
                 Equal(previousWorkspace, File.ReadAllText(workspacePath), "A failed deletion save did not restore the original workspace file.");
                 Ensure(controller.HasUnsavedChanges, "A failed deletion save discarded its retryable draft.");
-                Equal(1, controller.Presets.Count, "A failed deletion save restored the removed slot in the draft.");
+                Equal(1, controller.Presets.Count, "A failed deletion save restored the removed preset in the draft.");
 
                 controller.SaveAndApply();
                 Ensure(!controller.HasUnsavedChanges, "Retrying the deletion save left the workspace dirty.");
                 PresetWorkspace saved = PresetWorkspace.Load(File.ReadAllText(workspacePath), null);
-                Equal(1, saved.Presets.Count, "Saving deletion of slot 01 did not persist the one remaining preset.");
-                Equal(2, saved.Presets[0].Slot, "Saving deletion of slot 01 changed slot 02's identity.");
-                Equal(2, saved.ActivePresetSlot, "Saving deletion of slot 01 changed the active slot.");
+                Equal(1, saved.Presets.Count, "Saving the deletion did not persist the one remaining preset.");
+                Equal(secondId, saved.Presets[0].Id, "Saving deletion changed the surviving ID.");
+                Equal(secondId, saved.ActivePresetId, "Saving deletion changed the active ID.");
             }
 
             using (EditorController restarted = Open(root, entry))
             {
-                Equal(1, restarted.Presets.Count, "Restarting restored deleted slot 01.");
-                Equal(2, restarted.Presets[0].Slot, "Restarting changed slot 02's identity after deleting slot 01.");
-                Equal(2, restarted.ActivePresetSlot, "Restarting changed the active preset after deleting slot 01.");
-                Equal("slot 02 saved value", restarted.State.GetText(entry), "Restarting lost slot 02's saved value.");
+                Equal(1, restarted.Presets.Count, "Restarting restored the deleted preset.");
+                Equal(secondId, restarted.Presets[0].Id, "Restarting changed the surviving preset ID.");
+                Equal(secondId, restarted.ActivePresetId, "Restarting changed the active preset ID.");
+                Equal("second preset saved value", restarted.State.GetText(entry), "Restarting lost the surviving preset's saved value.");
             }
         }
         finally
@@ -375,16 +404,17 @@ internal static class Program
             {
                 controller.State.Stage(entry, "previously active value");
                 controller.SaveAndApply();
+                string activeId = controller.ActivePresetId;
                 string previousWorkspace = File.ReadAllText(Path.Combine(root, "presets.json"));
 
-                controller.CreatePreset();
+                string selectedId = controller.CreatePreset();
                 controller.State.Stage(entry, "new draft value");
                 GameTextCatalog.Latest.FailNextApplyAfterPartial = true;
                 controller.SaveAndApply();
 
                 Equal(previousWorkspace, File.ReadAllText(Path.Combine(root, "presets.json")), "A failed runtime apply did not restore the previous workspace file.");
-                Equal(1, controller.ActivePresetSlot, "A failed apply changed the active slot.");
-                Equal(2, controller.SelectedPresetSlot, "A failed apply discarded the selected target.");
+                Equal(activeId, controller.ActivePresetId, "A failed apply changed the active preset ID.");
+                Equal(selectedId, controller.SelectedPresetId, "A failed apply discarded the selected preset ID.");
                 Equal("new draft value", controller.State.GetText(entry), "A failed save discarded the draft.");
                 Ensure(controller.HasUnsavedChanges, "A failed runtime apply marked drafts saved.");
                 Equal("previously active value", GameTextCatalog.Latest.AppliedValues[entry.Id], "Runtime rollback did not restore the previous active overlay.");
