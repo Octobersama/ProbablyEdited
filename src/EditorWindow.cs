@@ -24,8 +24,8 @@ namespace ProbablyEdited
         private const float ResultRowFontScale = 0.88f;
 
         private const float SearchClearButtonWidth = 28f;
-        private const float SearchClearButtonInset = 4f;
-        private const float SearchClearTextInset = 34f;
+        private const float SearchClearButtonInset = 2f;
+        private const float SearchClearTextInset = 32f;
         private static List<string> BuildModifiedOptions()
         {
             return new List<string>
@@ -961,11 +961,13 @@ namespace ProbablyEdited
             if (buttonRect == null)
                 return;
 
-            buttonRect.SetParent(_searchInput.Rect, false);
-            buttonRect.anchorMin = new Vector2(1f, 0.5f);
-            buttonRect.anchorMax = new Vector2(1f, 0.5f);
+            RectTransform inputPlate = _searchInput.input.targetGraphic != null
+                ? _searchInput.input.targetGraphic.rectTransform : _searchInput.Rect;
+            buttonRect.SetParent(inputPlate, false);
+            buttonRect.anchorMin = new Vector2(1f, 0f);
+            buttonRect.anchorMax = Vector2.one;
             buttonRect.pivot = new Vector2(1f, 0.5f);
-            buttonRect.sizeDelta = new Vector2(SearchClearButtonWidth, SearchClearButtonWidth);
+            buttonRect.sizeDelta = new Vector2(SearchClearButtonWidth, -SearchClearButtonInset * 2f);
             buttonRect.anchoredPosition = new Vector2(-SearchClearButtonInset, 0f);
             buttonRect.SetAsLastSibling();
 
@@ -979,6 +981,16 @@ namespace ProbablyEdited
 
             BindVisibleMetaText(_clearSearchButton);
             _clearSearchButton.SetText("×");
+            if (_clearSearchButton.text != null)
+            {
+                _clearSearchButton.text.alignment = TextAlignmentOptions.Center;
+                _clearSearchButton.text.margin = Vector4.zero;
+                RectTransform labelRect = _clearSearchButton.text.rectTransform;
+                labelRect.anchorMin = Vector2.zero;
+                labelRect.anchorMax = Vector2.one;
+                labelRect.offsetMin = Vector2.zero;
+                labelRect.offsetMax = Vector2.zero;
+            }
             NativeFontSupport.Apply(_clearSearchButton);
             RefreshSearchClearButton();
         }
@@ -999,7 +1011,10 @@ namespace ProbablyEdited
             if (input == null || string.IsNullOrEmpty(input.text))
                 return;
 
-            input.text = string.Empty;
+            using (TextInputContextMenu.BeginAtomicEdit(_searchInput))
+            {
+                input.text = string.Empty;
+            }
             input.Select();
             input.ActivateInputField();
         }

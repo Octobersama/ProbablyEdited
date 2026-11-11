@@ -88,6 +88,30 @@ namespace ProbablyEdited
             binding.ConfigureTarget(logicalTarget, binding.ConfiguredReadOnly);
         }
 
+        /// <summary>Begins a separate undoable transaction for text changes made before the returned scope is disposed.</summary>
+        public static IDisposable BeginAtomicEdit(CustomUIElement element)
+        {
+            if (element == null)
+                throw new ArgumentNullException(nameof(element));
+            if (element.input == null)
+                throw new ArgumentException("The UI element has no TMP input field.", nameof(element));
+
+            return BeginAtomicEdit(element.input);
+        }
+
+        /// <summary>Begins a separate undoable transaction for text changes made before the returned scope is disposed.</summary>
+        public static IDisposable BeginAtomicEdit(TMP_InputField input)
+        {
+            if (input == null)
+                throw new ArgumentNullException(nameof(input));
+
+            int instanceId = input.GetInstanceID();
+            if (!Bindings.TryGetValue(instanceId, out InputBinding binding) || binding.Input != input)
+                throw new InvalidOperationException("Attach the context menu before beginning an atomic edit.");
+
+            return binding.BeginAtomicEdit();
+        }
+
         /// <summary>Closes the active context menu and restores its input selection.</summary>
         public static void CloseAll()
         {
@@ -112,7 +136,9 @@ namespace ProbablyEdited
             if (!IsTargetUsable(input))
                 return;
 
+            binding.ObserveInputState();
             CloseAll();
+            binding.FlushTypingGroup();
             binding.CaptureSelection();
 
             MenuSession session = new MenuSession(binding, eventData.position, eventData.pressEventCamera ?? eventData.enterEventCamera);
@@ -199,6 +225,40 @@ namespace ProbablyEdited
                 binding.SetSelection(anchor, focus);
         }
 
+        internal static void ObserveInput(TMP_InputField input)
+        {
+            if (input == null)
+                return;
+
+            int instanceId = input.GetInstanceID();
+            if (Bindings.TryGetValue(instanceId, out InputBinding binding) && binding.Input == input)
+                binding.ObserveInputState();
+        }
+
+        internal static void FinalizePendingInput(TMP_InputField input)
+        {
+            if (input == null)
+                return;
+
+            int instanceId = input.GetInstanceID();
+            if (Bindings.TryGetValue(instanceId, out InputBinding binding) && binding.Input == input)
+                binding.FinalizePendingAtomicEdit();
+        }
+
+        internal static void InputDeselected(TMP_InputField input)
+        {
+            if (input == null)
+                return;
+
+            int instanceId = input.GetInstanceID();
+            if (Bindings.TryGetValue(instanceId, out InputBinding binding) && binding.Input == input)
+            {
+                binding.ObserveInputState();
+                binding.CaptureSelection();
+                binding.FlushTypingGroup();
+            }
+        }
+
         internal static bool TryHandleHistoryShortcut(TMP_InputField input)
         {
             if (input == null || !input.isFocused)
@@ -237,6 +297,21 @@ namespace ProbablyEdited
                 Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt),
                 Input.GetKeyDown(KeyCode.Z), Input.GetKeyDown(KeyCode.Y),
                 !string.IsNullOrEmpty(Input.compositionString));
+        }
+
+        private static bool IsNativePasteOrCutGesture()
+        {
+            bool isMacOS = Application.platform == RuntimePlatform.OSXPlayer
+                || Application.platform == RuntimePlatform.OSXEditor;
+            bool primaryModifierHeld = isMacOS
+                ? Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand)
+                : Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            return primaryModifierHeld && (Input.GetKey(KeyCode.V) || Input.GetKey(KeyCode.X));
+        }
+
+        private static double GetUnscaledTime()
+        {
+            return Time.unscaledTime;
         }
 
 
@@ -544,13 +619,21 @@ namespace ProbablyEdited
             private bool _historyInitialized;
             private bool _applyingHistory;
             private bool _applyingContextEdit;
+            private bool _compositionPending;
+            private int _atomicEditDepth;
+            private int _selectionReplacementFrame = -1;
+            private bool _deferredAtomicEditPending;
+            private int _deferredAtomicEditFrame = -1;
+            private string _deferredAtomicEditText;
+            private int _deferredAtomicEditAnchor;
+            private int _deferredAtomicEditFocus;
             private readonly TMP_InputField.OnValidateInput previousValidation;
             private readonly TMP_InputField.OnValidateInput historyValidation;
 
             public InputBinding(TMP_InputField input)
             {
                 Input = input;
-                History = new TextEditHistory();
+                History = new TextEditHistory(GetUnscaledTime);
                 previousValidation = Input.onValidateInput;
                 historyValidation = ValidateCharacter;
                 Input.onValidateInput = historyValidation;
@@ -564,7 +647,6 @@ namespace ProbablyEdited
             public bool ConfiguredReadOnly { get; private set; }
             public bool IsReadOnly => ConfiguredReadOnly || Input == null || Input.readOnly;
             public bool CanEdit => !IsReadOnly && Input != null && Input.IsInteractable();
-
 
             public void ConfigureTarget(object logicalTarget, bool readOnly)
             {
@@ -580,6 +662,11 @@ namespace ProbablyEdited
                         CloseAll();
 
                     Relay?.CancelPendingRestore();
+                    _selectionReplacementFrame = -1;
+                    _compositionPending = false;
+                    _deferredAtomicEditPending = false;
+                    _deferredAtomicEditFrame = -1;
+                    _deferredAtomicEditText = null;
                     History.Reset(text, Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
                     _historyInitialized = true;
                 }
@@ -589,11 +676,58 @@ namespace ProbablyEdited
                 _hasTarget = true;
             }
 
-            public void CaptureSelection()
+            public IDisposable BeginAtomicEdit()
+            {
+                FinalizePendingAtomicEdit();
+                History.FlushTypingGroup();
+                _atomicEditDepth++;
+                return new AtomicEditScope(this);
+            }
+
+            private void EndAtomicEdit()
+            {
+                _atomicEditDepth--;
+            }
+
+            public void FlushTypingGroup()
+            {
+                FinalizePendingAtomicEdit();
+                History.FlushTypingGroup();
+            }
+
+            public void ObserveInputState()
             {
                 if (Input == null || !_historyInitialized)
                     return;
 
+                FinalizePendingAtomicEdit();
+                if (_compositionPending && string.IsNullOrEmpty(UnityEngine.Input.compositionString))
+                {
+                    _compositionPending = false;
+                    _selectionReplacementFrame = -1;
+                    DeferAtomicInputEdit(Input.text, Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
+                    return;
+                }
+
+                if (_compositionPending)
+                    return;
+
+                if (!Input.isFocused)
+                    return;
+
+                int anchor = Input.selectionStringAnchorPosition;
+                int focus = Input.selectionStringFocusPosition;
+                TextEditSnapshot current = History.Current;
+                if (current.AnchorPosition != anchor || current.FocusPosition != focus)
+                    History.UpdateCurrentSelection(anchor, focus);
+            }
+
+            public void CaptureSelection()
+            {
+                if (Input == null || !_historyInitialized || _compositionPending)
+                    return;
+
+                FinalizePendingAtomicEdit();
                 History.UpdateCurrentSelection(Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
             }
 
@@ -632,6 +766,7 @@ namespace ProbablyEdited
 
             public void Undo()
             {
+                FinalizePendingAtomicEdit();
                 if (!History.TryUndo(out TextEditSnapshot snapshot))
                     return;
 
@@ -640,6 +775,7 @@ namespace ProbablyEdited
 
             public void Redo()
             {
+                FinalizePendingAtomicEdit();
                 if (!History.TryRedo(out TextEditSnapshot snapshot))
                     return;
 
@@ -664,7 +800,11 @@ namespace ProbablyEdited
                 if (CanEdit && Input.isFocused && IsTargetUsable(Input)
                     && TextHistoryShortcut.BlocksCharacter(GetCurrentHistoryCommand(), character))
                     return '\0';
-                return previousValidation != null ? previousValidation(text, position, character) : character;
+
+                char validated = previousValidation != null ? previousValidation(text, position, character) : character;
+                if (validated != '\0' && Input.selectionStringAnchorPosition != Input.selectionStringFocusPosition)
+                    _selectionReplacementFrame = Time.frameCount;
+                return validated;
             }
 
             private void OnValueChanged(string text)
@@ -672,10 +812,98 @@ namespace ProbablyEdited
                 if (_applyingHistory || Input == null)
                     return;
 
+                if (_deferredAtomicEditPending && _deferredAtomicEditFrame != Time.frameCount)
+                    FinalizePendingAtomicEdit();
+
+                if (!string.IsNullOrEmpty(UnityEngine.Input.compositionString))
+                {
+                    _compositionPending = true;
+                    _selectionReplacementFrame = -1;
+                    History.FlushTypingGroup();
+                    CloseMenuForValueChange();
+                    return;
+                }
+
+                if (_compositionPending)
+                {
+                    _compositionPending = false;
+                    DeferAtomicInputEdit(text, Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
+                    CloseMenuForValueChange();
+                    return;
+                }
+
+                bool isNativeClipboardEdit = _atomicEditDepth == 0 && !_applyingContextEdit
+                    && (_deferredAtomicEditPending || IsNativePasteOrCutGesture());
+                if (isNativeClipboardEdit)
+                {
+                    DeferAtomicInputEdit(text, Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
+                    CloseMenuForValueChange();
+                    return;
+                }
+
+                bool isAtomic = _applyingContextEdit
+                    || _atomicEditDepth > 0
+                    || _selectionReplacementFrame == Time.frameCount;
+                _selectionReplacementFrame = -1;
+
+                CloseMenuForValueChange();
+                if (isAtomic)
+                    History.RecordAtomic(text, Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
+                else
+                    History.Record(text, Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
+            }
+
+            private void DeferAtomicInputEdit(string text, int anchor, int focus)
+            {
+                History.FlushTypingGroup();
+                _deferredAtomicEditPending = true;
+                _deferredAtomicEditFrame = Time.frameCount;
+                _deferredAtomicEditText = text ?? string.Empty;
+                _deferredAtomicEditAnchor = anchor;
+                _deferredAtomicEditFocus = focus;
+                _selectionReplacementFrame = -1;
+                _compositionPending = false;
+            }
+
+            public void FinalizePendingAtomicEdit()
+            {
+                if (!_deferredAtomicEditPending)
+                    return;
+
+                string text = _deferredAtomicEditText;
+                int anchor = _deferredAtomicEditAnchor;
+                int focus = _deferredAtomicEditFocus;
+                _deferredAtomicEditPending = false;
+                _deferredAtomicEditFrame = -1;
+                _deferredAtomicEditText = null;
+                _deferredAtomicEditAnchor = 0;
+                _deferredAtomicEditFocus = 0;
+                History.RecordAtomic(text, anchor, focus);
+            }
+
+            private void CloseMenuForValueChange()
+            {
                 Relay?.CancelPendingRestore();
                 if (!_applyingContextEdit && _activeSession != null && _activeSession.Binding == this)
                     CloseAll();
-                History.Record(text, Input.selectionStringAnchorPosition, Input.selectionStringFocusPosition);
+            }
+
+            private sealed class AtomicEditScope : IDisposable
+            {
+                private InputBinding _binding;
+
+                public AtomicEditScope(InputBinding binding)
+                {
+                    _binding = binding;
+                }
+
+                public void Dispose()
+                {
+                    InputBinding binding = _binding;
+                    _binding = null;
+                    if (binding != null)
+                        binding.EndAtomicEdit();
+                }
             }
 
             private void ApplyHistorySnapshot(TextEditSnapshot snapshot)
@@ -757,7 +985,7 @@ namespace ProbablyEdited
         }
     }
 
-    internal sealed class TextInputContextMenuInputRelay : MonoBehaviour, IPointerClickHandler, IPointerDownHandler
+    internal sealed class TextInputContextMenuInputRelay : MonoBehaviour, IPointerClickHandler, IPointerDownHandler, IDeselectHandler
     {
         private static readonly WaitForEndOfFrame EndOfFrame = new WaitForEndOfFrame();
 
@@ -795,13 +1023,30 @@ namespace ProbablyEdited
 
         private void Update()
         {
+            TextInputContextMenu.ObserveInput(_input);
             if (_lastShortcutFrame != Time.frameCount && TextInputContextMenu.TryHandleHistoryShortcut(_input))
                 _lastShortcutFrame = Time.frameCount;
+        }
+
+        private void LateUpdate()
+        {
+            // TMP can emit several callbacks for one paste or IME commit; commit after input processing.
+            TextInputContextMenu.FinalizePendingInput(_input);
         }
 
         public void OnPointerDown(PointerEventData eventData)
         {
             CancelPendingRestore();
+        }
+
+        public void OnDeselect(BaseEventData eventData)
+        {
+            TextInputContextMenu.InputDeselected(_input);
+        }
+
+        private void OnDisable()
+        {
+            TextInputContextMenu.InputDeselected(_input);
         }
 
         public void OnPointerClick(PointerEventData eventData)

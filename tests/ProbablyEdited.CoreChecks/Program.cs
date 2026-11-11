@@ -19,16 +19,24 @@ internal static class Program
         Run("unavailable imported keys remain saved and other locales are not missing", RetainsUnavailableOverrides, ref failures);
         Run("saved snapshots track stage, revert, and restore", TracksSavedSnapshots, ref failures);
         Run("preview plans cannot apply after state changes", RejectsStalePlans, ref failures);
-        Run("text edit history supports repeated undo and redo", TextHistoryRestoresSnapshots, ref failures);
-        Run("text edit history clears redo after a new edit", TextHistoryClearsRedoAfterEditing, ref failures);
-        Run("text edit history reset starts from the current target", TextHistoryResetsTarget, ref failures);
-        Run("text edit history keeps redo through selection-only replay", TextHistoryPreservesRedoAcrossSelectionChanges, ref failures);
-        Run("separate text edit histories remain isolated", TextHistoryInstancesRemainIndependent, ref failures);
-        Run("text edit history retains UTF-16 selection positions", TextHistoryRetainsSelection, ref failures);
+        Run("typing bursts form one undo step", TextHistoryGroupsTypingBurst, ref failures);
+        Run("typing pauses start a new undo step", TextHistorySplitsAfterPause, ref failures);
+        Run("continuous typing is capped at one second per group", TextHistorySplitsAtMaximumDuration, ref failures);
+        Run("undo immediately flushes the current typing group", TextHistoryUndoFlushesCurrentGroup, ref failures);
+        Run("atomic edits stay separate from nearby typing", TextHistoryKeepsAtomicEditsSeparate, ref failures);
+        Run("insertion and deletion directions start separate groups", TextHistorySeparatesDirections, ref failures);
+        Run("cursor jumps split typing groups", TextHistoryCursorJumpStartsNewGroup, ref failures);
+        Run("a new edit after undo clears redo", TextHistoryClearsRedoAfterEditing, ref failures);
+        Run("target reset starts fresh history", TextHistoryResetsTarget, ref failures);
+        Run("selection-only replay preserves redo", TextHistoryPreservesRedoAcrossSelectionChanges, ref failures);
+        Run("histories stay isolated per input", TextHistoryInstancesRemainIndependent, ref failures);
+        Run("history retains UTF-16 selection positions", TextHistoryRetainsSelection, ref failures);
+        Run("multi-character commits stay one undo step", TextHistoryGroupsMultiCharacterCommits, ref failures);
+        Run("history supports repeated undo and redo", TextHistoryRestoresSnapshots, ref failures);
         Run("history shortcuts use platform command conventions", TextHistoryShortcutCommands, ref failures);
-        Run("history shortcuts respect IME and preserve ordinary characters", TextHistoryShortcutCharacterBoundaries, ref failures);
+        Run("history shortcuts respect IME and ordinary characters", TextHistoryShortcutCharacterBoundaries, ref failures);
 
-        Console.WriteLine(failures == 0 ? "All 17 Core checks passed." : $"{failures} Core check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All 25 Core checks passed." : $"{failures} Core check(s) failed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -70,15 +78,176 @@ internal static class Program
         Ensure(!TextHistoryShortcut.BlocksCharacter(TextHistoryCommand.Undo, '字'), "The guard must not filter unrelated Unicode text.");
     }
 
+    private static void TextHistoryGroupsTypingBurst()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset(string.Empty, 0, 0);
+
+        clock.Now = 0.1d;
+        history.Record("a", 1, 1);
+        clock.Now = 0.2d;
+        history.Record("aa", 2, 2);
+        clock.Now = 0.3d;
+        history.Record("aaa", 3, 3);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Typing burst had no undo step.");
+        Equal(string.Empty, undone.Text, "One undo did not remove the whole typing burst.");
+        Ensure(!history.CanUndo, "A burst of adjacent typing created multiple undo steps.");
+        Ensure(history.TryRedo(out TextEditSnapshot redone), "Typing burst could not be redone.");
+        Equal("aaa", redone.Text, "Redo did not restore the full typing burst.");
+    }
+
+    private static void TextHistorySplitsAfterPause()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset(string.Empty, 0, 0);
+
+        clock.Now = 0.1d;
+        history.Record("a", 1, 1);
+        clock.Now = 0.2d;
+        history.Record("ab", 2, 2);
+        clock.Now = 0.56d;
+        history.Record("abc", 3, 3);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Typing after a pause had no undo step.");
+        Equal("ab", undone.Text, "Typing after an idle pause merged with earlier typing.");
+        Ensure(history.TryUndo(out undone), "The first typing group could not be undone.");
+        Equal(string.Empty, undone.Text, "Undo did not restore text before both typing groups.");
+    }
+
+    private static void TextHistorySplitsAtMaximumDuration()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset(string.Empty, 0, 0);
+
+        clock.Now = 0d;
+        history.Record("a", 1, 1);
+        clock.Now = 0.3d;
+        history.Record("ab", 2, 2);
+        clock.Now = 0.6d;
+        history.Record("abc", 3, 3);
+        clock.Now = 0.9d;
+        history.Record("abcd", 4, 4);
+        clock.Now = 1.05d;
+        history.Record("abcde", 5, 5);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Typing past the maximum group duration had no undo step.");
+        Equal("abcd", undone.Text, "Continuous typing exceeded the maximum group duration.");
+        Ensure(history.TryUndo(out undone), "The first maximum-duration group could not be undone.");
+        Equal(string.Empty, undone.Text, "The first group did not restore its starting text.");
+    }
+
+    private static void TextHistoryUndoFlushesCurrentGroup()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset("start", 5, 5);
+        clock.Now = 0.1d;
+        history.Record("start ", 6, 6);
+        clock.Now = 0.2d;
+        history.Record("start a", 7, 7);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable before the idle boundary.");
+        Equal("start", undone.Text, "Immediate undo did not flush the active typing group.");
+        Ensure(!history.CanUndo, "Immediate undo left part of the active group behind.");
+        Ensure(history.TryRedo(out TextEditSnapshot redone), "Immediate undo could not be redone.");
+        Equal("start a", redone.Text, "Redo did not restore all text typed before immediate undo.");
+    }
+
+    private static void TextHistoryKeepsAtomicEditsSeparate()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset("abcd", 4, 4);
+        clock.Now = 0.1d;
+        history.Record("abcde", 5, 5);
+        clock.Now = 0.2d;
+        history.RecordAtomic("abXde", 3, 3);
+        clock.Now = 0.3d;
+        history.Record("abX!de", 4, 4);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Typing after an atomic edit had no undo step.");
+        Equal("abXde", undone.Text, "Typing after an atomic edit did not remain a separate undo step.");
+        Ensure(history.TryUndo(out undone), "The atomic range replacement had no undo step.");
+        Equal("abcde", undone.Text, "Undo did not restore text before the atomic replacement.");
+        Ensure(history.TryUndo(out undone), "Typing before the atomic replacement had no undo step.");
+        Equal("abcd", undone.Text, "Undo did not restore text before the typing group.");
+
+        history.Reset("abcdef", 6, 6);
+        clock.Now = 0.4d;
+        history.RecordAtomic("adef", 1, 1);
+        Ensure(history.TryUndo(out undone), "An atomic range deletion had no undo step.");
+        Equal("abcdef", undone.Text, "Undo did not restore text removed by the range deletion.");
+
+        history.Reset("a", 1, 1);
+        clock.Now = 0.5d;
+        history.Record("ab", 2, 2);
+        clock.Now = 0.6d;
+        history.RecordAtomic("abc", 3, 3);
+        Ensure(history.TryUndo(out undone), "A single-character paste had no undo step.");
+        Equal("ab", undone.Text, "A single-character paste merged into nearby typing.");
+        Ensure(history.TryUndo(out undone), "Typing before a single-character paste had no undo step.");
+        Equal("a", undone.Text, "Undo did not restore text before the paste.");
+    }
+
+    private static void TextHistorySeparatesDirections()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset("a", 1, 1);
+        clock.Now = 0.1d;
+        history.Record("ab", 2, 2);
+        clock.Now = 0.2d;
+        history.Record("a", 1, 1);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Backspace after insertion had no undo step.");
+        Equal("ab", undone.Text, "Backspace merged into the preceding insertion.");
+        Ensure(history.TryUndo(out undone), "The insertion before backspace had no undo step.");
+        Equal("a", undone.Text, "Undo did not restore text before insertion.");
+
+        history.Reset("abcd", 2, 2);
+        clock.Now = 0.3d;
+        history.Record("acd", 1, 1);
+        clock.Now = 0.4d;
+        history.Record("ad", 1, 1);
+        Ensure(history.TryUndo(out undone), "Forward delete after backspace had no undo step.");
+        Equal("acd", undone.Text, "Forward delete merged into backspace.");
+        Ensure(history.TryUndo(out undone), "Backspace before forward delete had no undo step.");
+        Equal("abcd", undone.Text, "Undo did not restore text before backspace.");
+    }
+
+    private static void TextHistoryCursorJumpStartsNewGroup()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset("aaa", 3, 3);
+        clock.Now = 0.1d;
+        history.Record("aaaa", 4, 4);
+        history.UpdateCurrentSelection(1, 1);
+        clock.Now = 0.2d;
+        history.Record("aaaaa", 2, 2);
+        clock.Now = 0.3d;
+        history.Record("aaaaaa", 3, 3);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Typing after a cursor jump had no undo step.");
+        Equal("aaaa", undone.Text, "Typing after a cursor jump merged into the earlier group.");
+        Ensure(history.TryUndo(out undone), "The typing group before the cursor jump had no undo step.");
+        Equal("aaa", undone.Text, "Undo did not restore text before the cursor jump.");
+    }
+
     private static void TextHistoryRestoresSnapshots()
     {
-        var history = new TextEditHistory();
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
         history.Reset("hello", 5, 5);
-        history.Record("hello!", 6, 6);
-        history.Record("hello!!", 7, 7);
-        history.Record("hello!!!", 8, 8);
+        history.RecordAtomic("hello!", 6, 6);
+        history.RecordAtomic("hello!!", 7, 7);
+        history.RecordAtomic("hello!!!", 8, 8);
 
-        Ensure(history.TryUndo(out TextEditSnapshot undone), "First undo was unavailable after three edits.");
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "First undo was unavailable after three atomic edits.");
         Equal("hello!!", undone.Text, "First undo restored the wrong text.");
         Ensure(history.TryUndo(out undone), "Second undo was unavailable.");
         Equal("hello!", undone.Text, "Second undo restored the wrong text.");
@@ -97,17 +266,19 @@ internal static class Program
 
     private static void TextHistoryClearsRedoAfterEditing()
     {
-        var history = new TextEditHistory();
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
         history.Reset("a", 1, 1);
+        clock.Now = 0.1d;
         history.Record("ab", 2, 2);
+        clock.Now = 0.2d;
         history.Record("abc", 3, 3);
-        Ensure(history.TryUndo(out TextEditSnapshot undone), "First undo was unavailable after typing.");
-        Equal("ab", undone.Text, "First undo restored the wrong text before branching.");
-        Ensure(history.TryUndo(out undone), "Second undo was unavailable before branching.");
-        Equal("a", undone.Text, "Second undo did not restore the branch point.");
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable after typing.");
+        Equal("a", undone.Text, "Undo did not return to the start of the typing group.");
 
+        clock.Now = 0.3d;
         history.Record("aB", 2, 2);
-        Ensure(!history.CanRedo, "A new edit after repeated undo left old redo history available.");
+        Ensure(!history.CanRedo, "A real edit after undo left discarded redo history available.");
         Ensure(history.TryUndo(out undone), "The branch edit could not be undone.");
         Equal("a", undone.Text, "Undo did not return to the branch point.");
         Ensure(history.TryRedo(out TextEditSnapshot redone), "The branch edit could not be redone.");
@@ -116,9 +287,10 @@ internal static class Program
 
     private static void TextHistoryResetsTarget()
     {
-        var history = new TextEditHistory();
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
         history.Reset("first target", 12, 12);
-        history.Record("first target edit", 17, 17);
+        history.RecordAtomic("first target edit", 17, 17);
         history.Reset("second target", 13, 13);
 
         Ensure(!history.CanUndo, "A target reset retained the previous target's undo history.");
@@ -127,28 +299,30 @@ internal static class Program
 
     private static void TextHistoryPreservesRedoAcrossSelectionChanges()
     {
-        var history = new TextEditHistory();
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
         history.Reset("initial", 7, 7);
-        history.Record("edited", 6, 6);
+        history.RecordAtomic("edited", 6, 6);
 
         Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable before selection-only changes.");
         Equal("initial", undone.Text, "Undo restored the wrong text before selection-only changes.");
         history.UpdateCurrentSelection(2, 4);
         history.Record("initial", 1, 3);
 
-        Ensure(history.CanRedo, "Selection changes or a same-text replay discarded redo history.");
+        Ensure(history.CanRedo, "Selection changes or a same-text callback discarded redo history.");
         Ensure(history.TryRedo(out TextEditSnapshot redone), "Redo was unavailable after selection-only changes.");
         Equal("edited", redone.Text, "Redo restored the wrong text after selection-only changes.");
     }
 
     private static void TextHistoryInstancesRemainIndependent()
     {
-        var first = new TextEditHistory();
-        var second = new TextEditHistory();
+        var clock = new HistoryClock();
+        TextEditHistory first = clock.CreateHistory();
+        TextEditHistory second = clock.CreateHistory();
         first.Reset("first", 5, 5);
-        first.Record("first edit", 10, 10);
+        first.RecordAtomic("first edit", 10, 10);
         second.Reset("second", 6, 6);
-        second.Record("second edit", 11, 11);
+        second.RecordAtomic("second edit", 11, 11);
 
         Ensure(first.TryUndo(out TextEditSnapshot firstUndo), "First history could not undo its own edit.");
         Equal("first", firstUndo.Text, "First history restored another target's text.");
@@ -159,13 +333,35 @@ internal static class Program
 
     private static void TextHistoryRetainsSelection()
     {
-        var history = new TextEditHistory();
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
         history.Reset("A🌙BC", 3, 5);
-        history.Record("A🌙B!C", 4, 4);
+        history.RecordAtomic("A🌙B!C", 4, 4);
 
         Ensure(history.TryUndo(out TextEditSnapshot undone), "Undo was unavailable for selection restoration.");
+        Equal("A🌙BC", undone.Text, "Undo changed the UTF-16 text unexpectedly.");
         Equal(3, undone.AnchorPosition, "Undo lost the UTF-16 selection anchor.");
         Equal(5, undone.FocusPosition, "Undo lost the UTF-16 selection focus.");
+    }
+
+    private static void TextHistoryGroupsMultiCharacterCommits()
+    {
+        var clock = new HistoryClock();
+        TextEditHistory history = clock.CreateHistory();
+        history.Reset("p", 1, 1);
+        clock.Now = 0.1d;
+        history.Record("pr", 2, 2);
+        clock.Now = 0.2d;
+        history.Record("pr🌙字", 5, 5);
+
+        Ensure(history.TryUndo(out TextEditSnapshot undone), "A multi-character commit had no undo step.");
+        Equal("pr", undone.Text, "A multi-character commit merged into surrounding typing.");
+        Ensure(history.TryRedo(out TextEditSnapshot redone), "A multi-character commit could not be redone.");
+        Equal("pr🌙字", redone.Text, "Redo did not restore the full UTF-16 commit.");
+        Equal(5, redone.FocusPosition, "Redo lost the UTF-16 caret position after the commit.");
+        Ensure(history.TryUndo(out undone), "The commit could not be undone after replay.");
+        Ensure(history.TryUndo(out undone), "Typing before the commit had no undo step.");
+        Equal("p", undone.Text, "Undo did not restore text before typing preceding the commit.");
     }
 
     private static void RoundTripsReplacementText()
@@ -455,4 +651,15 @@ internal static class Program
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
             throw new InvalidOperationException(message + $" Expected: {expected}; actual: {actual}.");
     }
+
+    private sealed class HistoryClock
+    {
+        public double Now { get; set; }
+
+        public TextEditHistory CreateHistory()
+        {
+            return new TextEditHistory(() => Now);
+        }
+    }
+
 }
