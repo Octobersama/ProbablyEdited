@@ -204,7 +204,7 @@ status.validation.text_null,"替换文本不能为 null；空字符串可以用�
 status.validation.placeholders,"占位变量发生变化；这可能导致缺少游戏数值、名字或格式化错误。"
 status.validation.rich_text,"富文本标签发生变化；请确认标签仍成对、拼写正确。"
 status.validation.braces,"花括号似乎不匹配；游戏格式化时可能无法显示此文本。"
-preset.default_name,"预设 {0}"
+preset.default_name,"预设{0}"
 preset.section.editor,"编辑预设"
 preset.action.create,"新建预设"
 preset.action.rename,"重命名"
