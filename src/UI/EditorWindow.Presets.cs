@@ -416,7 +416,7 @@ namespace ProbablyEdited
 
             builder.AddHeader("重命名所选预设");
             builder.AddLabel("保存并应用后，名称会写入本地预设工作区。");
-            builder.AddInput("预设名称", _renamePresetDraft, OnPresetRenameInputChanged, "preset_name");
+            builder.AddInput("预设名称", _renamePresetDraft, null, "preset_name", OnPresetRenameInputChanged);
             _renamePresetInput = builder.Last;
             _renamePresetInput.SetFixedWidth(420f);
             DisablePresetNameRichText(_renamePresetInput);

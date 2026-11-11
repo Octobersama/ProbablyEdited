@@ -117,6 +117,7 @@ namespace ProbablyEdited
             MenuSession session = new MenuSession(binding, eventData.position, eventData.pressEventCamera ?? eventData.enterEventCamera);
             _activeSession = session;
             ShowMenu(session);
+            eventData.Use();
         }
 
         internal static void InvokeAction(int generation, int action)
