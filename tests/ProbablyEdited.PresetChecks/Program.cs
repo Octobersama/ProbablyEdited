@@ -15,7 +15,10 @@ internal static class Program
         Run("version 1 workspaces load with default preset names", LoadsVersionOneWorkspace, ref failures);
         Run("version 2 exports preserve names and imports preserve/adopt slot names", SharesOnePreset, ref failures);
         Run("damaged workspace and stale previews are rejected safely", RejectsCorruptionAndStalePreview, ref failures);
-        Console.WriteLine(failures == 0 ? "All 7 preset checks passed." : $"{failures} preset check(s) failed.");
+        Run("saved slot deletion stays dirty and falls back safely", SavedPresetDeletionTracksDirtyState, ref failures);
+        Run("deleting a new slot is clean and reuses the freed slot", NewPresetDeletionIsCleanAndReusesSlot, ref failures);
+        Run("deleting and recreating a slot invalidates old import previews", DeletedPresetPreviewCannotTargetRecreatedSlot, ref failures);
+        Console.WriteLine(failures == 0 ? "All 10 preset checks passed." : $"{failures} preset check(s) failed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -235,6 +238,87 @@ internal static class Program
         Throws<InvalidOperationException>(() => workspace.ConfirmImport(preview, overwriteConflicts: true));
         Equal("changed after preview", workspace.State.Overrides[entry.Id], "Rejecting a stale preview changed the target draft.");
         Equal(0, workspace.GetPresetStatistics(3).OverrideCount, "A stale empty target was created.");
+    }
+
+    private static void SavedPresetDeletionTracksDirtyState()
+    {
+        var workspace = new PresetWorkspace();
+        TextEntry entry = Entry("game", "en", "delete-active", "baseline");
+        workspace.State.SetCatalog(new[] { entry });
+        workspace.State.Stage(entry, "slot 01 saved value");
+        workspace.MarkSavedAndApplied();
+
+        string onePreset = workspace.SerializeWorkspace();
+        Throws<InvalidOperationException>(() => workspace.DeletePreset(1));
+        Equal(onePreset, workspace.SerializeWorkspace(), "Rejecting deletion of the last preset changed the workspace.");
+        Equal(1, workspace.Presets.Count, "Rejecting deletion of the last preset removed it.");
+        Equal(1, workspace.SelectedPresetSlot, "Rejecting deletion of the last preset changed the selected slot.");
+        Equal(1, workspace.ActivePresetSlot, "Rejecting deletion of the last preset changed the active slot.");
+
+        Equal(2, workspace.CreatePreset(), "The second preset did not use slot 02.");
+        workspace.State.Stage(entry, "slot 02 saved value");
+        workspace.MarkSavedAndApplied();
+        string activeWorkspace = workspace.SerializeWorkspace();
+        Throws<InvalidOperationException>(() => workspace.DeletePreset(2));
+        Throws<InvalidOperationException>(() => workspace.DeletePreset(3));
+        Equal(activeWorkspace, workspace.SerializeWorkspace(), "Rejecting active or missing slot deletion changed the workspace.");
+        Equal(2, workspace.SelectedPresetSlot, "Rejecting active or missing slot deletion changed the selected slot.");
+        Equal(2, workspace.ActivePresetSlot, "A rejected deletion changed the active slot.");
+
+        IReadOnlyDictionary<TextId, string> activeSnapshot = workspace.ActiveOverrides;
+        workspace.SelectPreset(1);
+        workspace.DeletePreset(1);
+        Equal(2, workspace.SelectedPresetSlot, "Deleting the selected non-active slot did not fall back to the active slot.");
+        Equal(2, workspace.ActivePresetSlot, "Deleting an inactive slot changed the active slot.");
+        Ensure(ReferenceEquals(activeSnapshot, workspace.ActiveOverrides), "Deleting an inactive slot replaced the active override snapshot.");
+        Equal("slot 02 saved value", workspace.ActiveOverrides[entry.Id], "Deleting an inactive slot changed active override data.");
+        Ensure(workspace.HasUnsavedChanges, "Deleting a saved slot did not mark the workspace dirty.");
+        Ensure(!workspace.State.IsDirty, "The remaining saved preset became dirty after deleting another slot.");
+        Equal(1, workspace.Presets.Count, "The deleted saved slot is still present.");
+        Equal(2, workspace.Presets[0].Slot, "Deletion changed the surviving slot identity.");
+
+        PresetWorkspace reloaded = PresetWorkspace.Load(workspace.SerializeWorkspace(), null);
+        Equal(1, reloaded.Presets.Count, "Reloading a saved deletion restored the removed slot.");
+        Equal(2, reloaded.ActivePresetSlot, "Reloading a workspace without slot 01 changed its active slot.");
+        Ensure(!reloaded.HasUnsavedChanges, "Reloading the serialized deletion left a dirty draft.");
+    }
+
+    private static void NewPresetDeletionIsCleanAndReusesSlot()
+    {
+        var workspace = new PresetWorkspace();
+        TextEntry entry = Entry("game", "en", "delete-new", "baseline");
+        workspace.State.SetCatalog(new[] { entry });
+        int createdSlot = workspace.CreatePreset();
+        workspace.State.Stage(entry, "discarded new-slot draft");
+
+        workspace.DeletePreset(createdSlot);
+
+        Ensure(!workspace.HasUnsavedChanges, "Creating and deleting an unsaved slot left the workspace dirty.");
+        Equal(1, workspace.SelectedPresetSlot, "Deleting a new selected slot did not fall back to the active preset.");
+        Equal(2, workspace.CreatePreset(), "A deleted unsaved slot was not available for reuse.");
+        Equal(2, workspace.Presets.Count, "Reusing the freed slot created an unexpected number of presets.");
+    }
+
+    private static void DeletedPresetPreviewCannotTargetRecreatedSlot()
+    {
+        var workspace = new PresetWorkspace();
+        TextEntry target = Entry("game", "en", "preview-target", "target baseline");
+        TextEntry incoming = Entry("mod", "en", "preview-incoming", "incoming baseline");
+        workspace.State.SetCatalog(new[] { target });
+        Equal(2, workspace.CreatePreset(), "The import target did not use slot 02.");
+        workspace.State.Stage(target, "old target value");
+        workspace.SelectPreset(1);
+        workspace.MarkSavedAndApplied();
+
+        var patch = new EditorState();
+        patch.Stage(incoming, "incoming value");
+        PresetImportPreview preview = workspace.PreviewImport(patch.ExportJson("fixture"), 2, "fixture");
+        workspace.DeletePreset(2);
+        Equal(2, workspace.CreatePreset(), "The deleted import target slot was not reused.");
+        workspace.SelectPreset(1);
+
+        Throws<InvalidOperationException>(() => workspace.ConfirmImport(preview, overwriteConflicts: true));
+        Equal(0, workspace.GetPresetStatistics(2).OverrideCount, "A stale preview modified the recreated slot.");
     }
 
     private static TextEntry Entry(string source, string locale, string key, string original)

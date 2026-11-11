@@ -490,6 +490,7 @@ namespace ProbablyEdited
         private void CloseAuxiliaryWindows()
         {
             ClosePresetRenameWindow();
+            ClosePresetDeletionWindow();
             if (_importWindow != null && _importWindow.IsAlive) _importWindow.Close();
             if (_exportWindow != null && _exportWindow.IsAlive) _exportWindow.Close();
             if (_coverageWindow != null && _coverageWindow.IsAlive) _coverageWindow.Close();

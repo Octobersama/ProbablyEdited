@@ -35,6 +35,7 @@ namespace ProbablyEdited
         public int ActivePresetSlot => workspace.ActivePresetSlot;
         public bool HasUnsavedChanges => workspace.HasUnsavedChanges;
         public bool CanCreatePreset => workspace.CanCreatePreset;
+        public bool CanDeleteSelectedPreset => workspace.CanDeleteSelectedPreset;
         public bool IsLoading { get; private set; }
         public string Status { get; private set; } = "正在准备本地化数据库…";
         public IReadOnlyList<string> LocaleCodes => catalog.Codes;
@@ -154,6 +155,22 @@ namespace ProbablyEdited
             Status = "已新建“" + GetPresetLabel(slot) + "”；它从当前游戏与官方模组文本基线开始，不包含其他预设的修改。";
             StartPending();
             return slot;
+        }
+        public void DeletePreset(int slot)
+        {
+            bool selectionChanged = workspace.SelectedPresetSlot == slot;
+            string label = GetPresetLabel(slot);
+            workspace.DeletePreset(slot);
+            if (selectionChanged)
+            {
+                if (loadedLocales.Contains(SelectedLocale))
+                    State.SetCatalog(catalog.Entries(SelectedLocale));
+                else
+                    Enqueue(SelectedLocale);
+            }
+
+            Status = "已移除“" + label + "”；点击“保存并应用”后删除本地记录。";
+            StartPending();
         }
         public string GetPresetName(int slot)
         {

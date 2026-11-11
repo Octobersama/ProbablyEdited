@@ -6,7 +6,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>ProbablyEdited</AssemblyName>
     <RootNamespace>ProbablyEdited</RootNamespace>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <GameDirectory Condition="'$(GameDirectory)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Probably Stolen</GameDirectory>
     <GameManaged>$(GameDirectory)\Probably Stolen_Data\Managed</GameManaged>
     <OutputPath>build\</OutputPath>

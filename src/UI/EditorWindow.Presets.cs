@@ -9,6 +9,7 @@ namespace ProbablyEdited
     public sealed partial class EditorWindow
     {
         private const string RenamePresetWindowId = "probably_edited.editor.rename_preset";
+        private const string DeletePresetWindowId = "probably_edited.editor.delete_preset";
         private readonly List<TMP_Text> _presetTextBuffer = new List<TMP_Text>(8);
         private static readonly List<string> PageSizeOptions = new List<string> { "30", "50", "100", "200", "500" };
 
@@ -21,6 +22,12 @@ namespace ProbablyEdited
         private CustomUIElement _presetDropdown;
         private CustomUIElement _createPresetButton;
         private CustomUIElement _renamePresetButton;
+        private CustomUIElement _deletePresetButton;
+        private CustomUIWindow _deletePresetWindow;
+        private CustomUIElement _deletePresetErrorLabel;
+        private int _deletePresetSlot;
+        private string _deletePresetName = string.Empty;
+        private PresetStatistics _deletePresetStatistics;
         private CustomUIWindow _renamePresetWindow;
         private CustomUIElement _renamePresetInput;
         private CustomUIElement _renamePresetErrorLabel;
@@ -50,6 +57,9 @@ namespace ProbablyEdited
             _createPresetButton = builder.Last;
             builder.AddButton("重命名", OpenPresetRenameWindow, "rename_preset");
             _renamePresetButton = builder.Last;
+            builder.AddButton("删除", OpenPresetDeletionWindow, "delete_preset");
+            _deletePresetButton = builder.Last;
+            _deletePresetButton.SetTooltip(BuildPresetDeletionTooltip());
             builder.AddLabel(BuildPresetStatus());
             _presetStatusLabel = builder.Last;
             DisablePresetNameRichText(_presetStatusLabel);
@@ -180,6 +190,8 @@ namespace ProbablyEdited
             _presetStatusLabel?.SetText(BuildPresetStatus());
             _createPresetButton?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _controller.CanCreatePreset && _pendingEntry == null);
             _renamePresetButton?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _pendingEntry == null);
+            _deletePresetButton?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _controller.CanDeleteSelectedPreset && _pendingEntry == null);
+            _deletePresetButton?.SetTooltip(BuildPresetDeletionTooltip());
             _presetDropdown?.SetInteractable(!_controller.IsLoading && !_saveApplyPending && _presetSlots.Count > 1 && _pendingEntry == null);
 
             if (_pageSizeDropdown != null)
@@ -243,6 +255,15 @@ namespace ProbablyEdited
         private string BuildPresetStatus()
         {
             return "当前应用：" + _controller.GetPresetLabel(_controller.ActivePresetSlot);
+        }
+
+        private string BuildPresetDeletionTooltip()
+        {
+            if (_controller.Presets.Count == 1)
+                return "至少保留一个预设；先创建另一个预设并保存、应用后，才能删除当前预设。";
+            if (_controller.SelectedPresetSlot == _controller.ActivePresetSlot)
+                return "当前应用的预设不能删除；先保存并应用另一个预设后，才能删除当前预设。";
+            return "删除所选非当前应用预设的草稿；仅在保存并应用后写入磁盘。";
         }
 
         private string GetPresetName(int slot)
@@ -450,6 +471,111 @@ namespace ProbablyEdited
             _renamePresetDraft = string.Empty;
         }
 
+        private void OpenPresetDeletionWindow()
+        {
+            if (_controller.IsLoading || _saveApplyPending || _pendingEntry != null || !_controller.CanDeleteSelectedPreset)
+                return;
+            if (_deletePresetWindow != null && _deletePresetWindow.IsAlive)
+            {
+                _deletePresetWindow.BringToFront();
+                return;
+            }
+
+            _deletePresetSlot = _controller.SelectedPresetSlot;
+            _deletePresetName = _controller.GetPresetName(_deletePresetSlot);
+            _deletePresetStatistics = _controller.GetPresetStatistics(_deletePresetSlot);
+            CustomUIBuilder builder = CreateNativeSettingsWindow(DeletePresetWindowId, "删除预设")
+                .UseMetaPrefabs()
+                .Center()
+                .SetCloseOnEscape(true)
+                .OnClose(OnPresetDeletionWindowClosed);
+
+            builder.AddHeader("确认删除预设");
+            builder.AddLabel("槽位 " + _deletePresetSlot.ToString("00", CultureInfo.InvariantCulture)
+                + " · 名称：“" + _deletePresetName + "”");
+            DisablePresetNameRichText(builder.Last);
+            builder.AddLabel("现有内容：" + _deletePresetStatistics.OverrideCount + " 项修改 · "
+                + _deletePresetStatistics.LanguageCount + " 种语言 · "
+                + _deletePresetStatistics.SourceCount + " 个来源");
+            builder.AddWarning("删除会丢弃该预设的全部修改，以及当前文本框中尚未暂存的输入。当前应用的文本不会改变。");
+            builder.AddLabel("删除只会成为工作区草稿；点击主窗口“保存并应用”后才会写入磁盘。取消不会更改任何内容。");
+            builder.AddLabel(string.Empty);
+            _deletePresetErrorLabel = builder.Last;
+            DisablePresetNameRichText(_deletePresetErrorLabel);
+
+            builder.BeginRow(8f, UnityEngine.TextAnchor.MiddleRight);
+            builder.AddButton("删除预设", ConfirmPresetDeletion, "confirm_delete_preset");
+            builder.AddButton("取消", () => _deletePresetWindow?.Close(), "cancel_delete_preset");
+            builder.End();
+
+            _deletePresetWindow = builder.Show();
+            NativeFontSupport.Apply(_deletePresetWindow);
+        }
+
+        private void ConfirmPresetDeletion()
+        {
+            if (_controller.IsLoading || _saveApplyPending || _pendingEntry != null)
+            {
+                _deletePresetErrorLabel?.SetText("请等待当前操作完成后再确认删除。");
+                return;
+            }
+
+            try
+            {
+                PresetInfo current = FindPreset(_controller.Presets, _deletePresetSlot);
+                PresetStatistics statistics = current == null ? null : _controller.GetPresetStatistics(_deletePresetSlot);
+                if (current == null
+                    || _controller.SelectedPresetSlot != _deletePresetSlot
+                    || !StringComparer.Ordinal.Equals(current.Name, _deletePresetName)
+                    || statistics.OverrideCount != _deletePresetStatistics.OverrideCount
+                    || statistics.LanguageCount != _deletePresetStatistics.LanguageCount
+                    || statistics.SourceCount != _deletePresetStatistics.SourceCount)
+                {
+                    throw new InvalidOperationException("预设在确认前已变化；请关闭此窗口并重新打开确认。");
+                }
+
+                _controller.DeletePreset(_deletePresetSlot);
+                _importPreview = null;
+                if (FindPreset(_controller.Presets, _exportPresetSlot) == null)
+                {
+                    _exportPresetSlot = _controller.SelectedPresetSlot;
+                    SetReadOnlyText(_exportResultInput, string.Empty);
+                }
+
+                RebindSelectedEntryToCurrentState();
+                RefreshFilterOptions();
+                RefreshDetail();
+                RefreshRows();
+                RefreshPresetControls();
+                UpdateImportWindow();
+                RefreshMainStatus("已移除“槽位 " + _deletePresetSlot.ToString("00", CultureInfo.InvariantCulture)
+                    + " · " + _deletePresetName + "”；保存并应用后删除本地记录。");
+                ClosePresetDeletionWindow();
+            }
+            catch (Exception exception)
+            {
+                _deletePresetErrorLabel?.SetText(exception.Message);
+                NativeFontSupport.Apply(_deletePresetErrorLabel);
+            }
+        }
+
+        private void ClosePresetDeletionWindow()
+        {
+            if (_deletePresetWindow != null && _deletePresetWindow.IsAlive)
+                _deletePresetWindow.Close();
+            OnPresetDeletionWindowClosed();
+        }
+
+        private void OnPresetDeletionWindowClosed()
+        {
+            _deletePresetWindow = null;
+            _deletePresetErrorLabel = null;
+            _deletePresetSlot = 0;
+            _deletePresetName = string.Empty;
+            _deletePresetStatistics = null;
+        }
+
+
 
         private void OnPageSizeChanged(int index)
         {
@@ -516,6 +642,7 @@ namespace ProbablyEdited
             _presetDropdown = null;
             _createPresetButton = null;
             _renamePresetButton = null;
+            _deletePresetButton = null;
             _renamePresetInput = null;
             _renamePresetErrorLabel = null;
             _renamePresetSlot = 0;

@@ -15,11 +15,12 @@ internal static class Program
         Run("corrupt workspace never falls back to legacy active data", CorruptWorkspaceIsProtected, ref failures);
         Run("switching active presets preloads every required language", InactivePresetPreloadsEveryLanguage, ref failures);
         Run("single-preset export imports into the selected target with conflict choices", SharesOnePresetIntoTarget, ref failures);
+        Run("deleting saved slot 01 preserves retryability and reloads", DeletingSavedSlotOneIsRetryable, ref failures);
         Run("runtime apply failure rolls back disk and runtime independently", FailedApplyRestoresWorkspace, ref failures);
         Run("failed first workspace write removes its partial file", FailedFirstWorkspaceWrite, ref failures);
         Run("runtime rollback still runs when disk rollback fails", RuntimeRollbackSurvivesDiskRollbackFailure, ref failures);
 
-        Console.WriteLine(failures == 0 ? "All 9 controller checks passed." : $"{failures} controller check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All 10 controller checks passed." : $"{failures} controller check(s) failed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -302,6 +303,60 @@ internal static class Program
                 controller.ConfirmImport(legacyPreview, overwriteConflicts: true);
                 Equal("legacy v1 value", controller.State.Overrides[incomingFrench.Id], "A 1.0 share file did not import its original data.");
                 Equal("预设04", controller.Presets[3].Name, "Importing a v1 share into an empty slot did not use its default name.");
+            }
+        }
+        finally
+        {
+            RemoveStore(root);
+        }
+    }
+
+    private static void DeletingSavedSlotOneIsRetryable()
+    {
+        string root = NewStore();
+        TextEntry entry = Entry("game", "en", "delete-slot-one", "original baseline");
+        string workspacePath = Path.Combine(root, "presets.json");
+        try
+        {
+            using (EditorController controller = Open(root, entry))
+            {
+                controller.State.Stage(entry, "slot 01 saved value");
+                controller.SaveAndApply();
+                Equal(2, controller.CreatePreset(), "The second preset did not use slot 02.");
+                controller.State.Stage(entry, "slot 02 saved value");
+                controller.SaveAndApply();
+                Equal(2, controller.ActivePresetSlot, "Saving slot 02 did not make it active.");
+
+                controller.SelectPreset(1);
+                string previousWorkspace = File.ReadAllText(workspacePath);
+                controller.DeletePreset(1);
+
+                Equal(2, controller.SelectedPresetSlot, "Deleting selected slot 01 did not fall back to the active slot.");
+                Equal(2, controller.ActivePresetSlot, "Deleting slot 01 changed the active slot.");
+                Equal("slot 02 saved value", controller.State.GetText(entry), "The selected fallback was not rebound to slot 02's catalog and values.");
+                Ensure(controller.HasUnsavedChanges, "Deleting a saved slot did not leave a dirty workspace draft.");
+                Equal(1, controller.Presets.Count, "Deleting slot 01 left it in the controller's preset list.");
+
+                ModHelper.FailNextWrite("presets.json", afterPartialWrite: true);
+                controller.SaveAndApply();
+                Equal(previousWorkspace, File.ReadAllText(workspacePath), "A failed deletion save did not restore the original workspace file.");
+                Ensure(controller.HasUnsavedChanges, "A failed deletion save discarded its retryable draft.");
+                Equal(1, controller.Presets.Count, "A failed deletion save restored the removed slot in the draft.");
+
+                controller.SaveAndApply();
+                Ensure(!controller.HasUnsavedChanges, "Retrying the deletion save left the workspace dirty.");
+                PresetWorkspace saved = PresetWorkspace.Load(File.ReadAllText(workspacePath), null);
+                Equal(1, saved.Presets.Count, "Saving deletion of slot 01 did not persist the one remaining preset.");
+                Equal(2, saved.Presets[0].Slot, "Saving deletion of slot 01 changed slot 02's identity.");
+                Equal(2, saved.ActivePresetSlot, "Saving deletion of slot 01 changed the active slot.");
+            }
+
+            using (EditorController restarted = Open(root, entry))
+            {
+                Equal(1, restarted.Presets.Count, "Restarting restored deleted slot 01.");
+                Equal(2, restarted.Presets[0].Slot, "Restarting changed slot 02's identity after deleting slot 01.");
+                Equal(2, restarted.ActivePresetSlot, "Restarting changed the active preset after deleting slot 01.");
+                Equal("slot 02 saved value", restarted.State.GetText(entry), "Restarting lost slot 02's saved value.");
             }
         }
         finally

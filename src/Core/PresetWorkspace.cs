@@ -106,6 +106,7 @@ namespace ProbablyEdited
 
         private readonly object _marker = new object();
         private readonly SortedDictionary<int, PresetSlot> _slots = new SortedDictionary<int, PresetSlot>();
+        private readonly HashSet<int> _removedSavedSlots = new HashSet<int>();
         private IReadOnlyDictionary<TextId, string> _activeOverrides;
         private int _activeSlot = 1;
         private int _selectedSlot = 1;
@@ -115,6 +116,7 @@ namespace ProbablyEdited
         public EditorState State => _slots[_selectedSlot].State;
         public IReadOnlyDictionary<TextId, string> ActiveOverrides => _activeOverrides;
         public bool CanCreatePreset => _slots.Count < MaxSlots;
+        public bool CanDeleteSelectedPreset => _slots.Count > 1 && _selectedSlot != _activeSlot;
         public bool RequiresWorkspaceMigration { get; private set; }
 
         public bool HasUnsavedChanges
@@ -122,6 +124,9 @@ namespace ProbablyEdited
             get
             {
                 if (RequiresWorkspaceMigration)
+                    return true;
+
+                if (_removedSavedSlots.Count > 0)
                     return true;
 
                 foreach (PresetSlot preset in _slots.Values)
@@ -224,6 +229,27 @@ namespace ProbablyEdited
             _selectedSlot = slot;
             return slot;
         }
+        public void DeletePreset(int slot)
+        {
+            ValidateOccupiedSlot(slot);
+            if (_slots.Count == 1)
+            {
+                throw new InvalidOperationException(
+                    "至少保留一个预设。当前应用的预设不能删除；请先保存并应用另一个预设后再删除。");
+            }
+
+            if (slot == _activeSlot)
+                throw new InvalidOperationException("当前应用的预设不能删除；请先保存并应用另一个预设后再删除。");
+
+            PresetSlot preset = _slots[slot];
+            if (!preset.IsNew)
+                _removedSavedSlots.Add(slot);
+
+            _slots.Remove(slot);
+            if (_selectedSlot == slot)
+                _selectedSlot = _activeSlot;
+        }
+
 
         public PresetStatistics GetPresetStatistics(int slot)
         {
@@ -273,6 +299,7 @@ namespace ProbablyEdited
             }
 
             _activeOverrides = ReadOnlySnapshot(State.Overrides);
+            _removedSavedSlots.Clear();
             RequiresWorkspaceMigration = false;
         }
 
@@ -492,8 +519,6 @@ namespace ProbablyEdited
                 presets.Add(slot, new WorkspacePreset(name, overrides));
             }
 
-            if (!presets.ContainsKey(1))
-                throw new FormatException("工作区必须保留默认预设槽位 01。");
             if (!presets.ContainsKey(activeSlot))
                 throw new FormatException("工作区 activeSlot 必须指向一个已存在的预设。");
 
