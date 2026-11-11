@@ -11,6 +11,7 @@ internal static class Program
         TestLocalization.Initialize();
         int failures = 0;
         Run("replacement text round-trips without exporting baselines", RoundTripsReplacementText, ref failures);
+        Run("source choices keep game first and All sources last", SourceChoicesKeepGameFirstAndAllLast, ref failures);
         Run("export ordering is independent of edit order", ExportsDeterministically, ref failures);
         Run("invalid imports are rejected without changing drafts", RejectsInvalidImportsAtomically, ref failures);
         Run("imports preserve conflicts unless overwrite is selected", MergesImportConflicts, ref failures);
@@ -27,8 +28,24 @@ internal static class Program
         Run("history shortcuts use platform command conventions", TextHistoryShortcutCommands, ref failures);
         Run("history shortcuts respect IME and preserve ordinary characters", TextHistoryShortcutCharacterBoundaries, ref failures);
 
-        Console.WriteLine(failures == 0 ? "All 16 Core checks passed." : $"{failures} Core check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All 17 Core checks passed." : $"{failures} Core check(s) failed.");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void SourceChoicesKeepGameFirstAndAllLast()
+    {
+        var sourceIds = new HashSet<string>(new[] { "zeta", "game", "alpha" }, StringComparer.Ordinal);
+        List<string> choices = SourceFilterChoices.BuildValues(sourceIds, "game");
+        Equal("game", choices[0], "The game tables were not first.");
+        Equal("alpha", choices[1], "Mod sources were not sorted after the game tables.");
+        Equal("zeta", choices[2], "Mod sources were not sorted after the game tables.");
+        Equal(null, choices[3], "All sources was not the final option.");
+        Equal("game", SourceFilterChoices.ResolveSelection(sourceIds, null, false, "game"), "Game tables were not selected by default.");
+
+        Equal("zeta", SourceFilterChoices.ResolveSelection(sourceIds, "zeta", false, "game"), "A valid explicit source selection was not retained.");
+        Equal("game", SourceFilterChoices.ResolveSelection(sourceIds, "removed", false, "game"), "An unavailable source did not fall back to game tables.");
+        Equal(null, SourceFilterChoices.ResolveSelection(new HashSet<string> { "mod" }, "removed", false, "game"), "An unavailable source did not fall back to All sources when game tables were absent.");
+        Equal(null, SourceFilterChoices.ResolveSelection(sourceIds, null, true, "game"), "An explicit All sources selection was not retained.");
     }
 
     private static void TextHistoryShortcutCommands()

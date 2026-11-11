@@ -40,6 +40,7 @@
   <Target Name="PackageMod" AfterTargets="Build">
     <MakeDir Directories="$(MSBuildProjectDirectory)\dist\ProbablyEdited" />
     <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)\manifest.xml;$(MSBuildProjectDirectory)\LICENSE;$(MSBuildProjectDirectory)\NOTICE" DestinationFolder="$(MSBuildProjectDirectory)\dist\ProbablyEdited" />
+    <RemoveDir Directories="$(MSBuildProjectDirectory)\dist\ProbablyEdited\Localization" />
     <MakeDir Directories="$(MSBuildProjectDirectory)\dist\ProbablyEdited\Localization" />
     <Copy SourceFiles="@(ModLocalization)" DestinationFolder="$(MSBuildProjectDirectory)\dist\ProbablyEdited\Localization" />
   </Target>

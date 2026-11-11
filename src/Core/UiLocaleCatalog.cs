@@ -21,42 +21,73 @@ namespace ProbablyEdited
     {
         public const string FollowGame = "auto";
         private readonly IDictionary<string, Dictionary<string, string>> tables;
+        private readonly List<string> nativeLanguageCodes = new List<string>();
+        private readonly HashSet<string> supportedLanguageCodes = new HashSet<string>(StringComparer.Ordinal);
 
-        public UiLocaleCatalog(IDictionary<string, Dictionary<string, string>> tables)
+        public UiLocaleCatalog(IDictionary<string, Dictionary<string, string>> tables, IEnumerable<string> nativeLanguageCodes)
         {
             this.tables = tables ?? throw new ArgumentNullException(nameof(tables));
             if (!tables.TryGetValue("en", out Dictionary<string, string> english) || english == null)
                 throw new ArgumentException("The mod's English localization dictionary is missing.", nameof(tables));
+            SetNativeLanguages(nativeLanguageCodes);
+        }
+
+        public void SetNativeLanguages(IEnumerable<string> languageCodes)
+        {
+            nativeLanguageCodes.Clear();
+            supportedLanguageCodes.Clear();
+            if (languageCodes != null)
+            {
+                foreach (string code in languageCodes)
+                {
+                    if (string.IsNullOrWhiteSpace(code)) continue;
+                    string canonical = Canonicalize(code);
+                    if (canonical == FollowGame || !supportedLanguageCodes.Add(canonical)) continue;
+                    nativeLanguageCodes.Add(code);
+                }
+            }
+
+            if (supportedLanguageCodes.Add(Canonicalize("zh-TW")))
+                nativeLanguageCodes.Add("zh-TW");
         }
 
         public string ResolveLanguage(string preference, string gameLanguage)
         {
             string requested = string.IsNullOrEmpty(preference) || preference == FollowGame
                 ? gameLanguage : preference;
-            return FindLanguage(requested) ?? "en";
+            string language = FindLanguage(requested);
+            if (language != null) return language;
+            return FindLanguage(gameLanguage) ?? "en";
         }
 
         public string FindLanguage(string requested)
         {
             if (string.IsNullOrEmpty(requested)) return null;
-            if (tables.TryGetValue(requested, out Dictionary<string, string> exact) && exact != null)
+            if (tables.TryGetValue(requested, out Dictionary<string, string> exact) && exact != null
+                && supportedLanguageCodes.Contains(Canonicalize(requested)))
                 return requested;
 
             string canonical = Canonicalize(requested);
-            foreach (var table in tables)
+            if (supportedLanguageCodes.Contains(canonical))
             {
-                if (table.Value != null && Canonicalize(table.Key) == canonical)
-                    return table.Key;
+                foreach (var table in tables)
+                {
+                    if (table.Value != null && Canonicalize(table.Key) == canonical)
+                        return table.Key;
+                }
             }
 
             int separator = canonical.IndexOf('-');
             if (separator > 0)
             {
                 string parent = canonical.Substring(0, separator);
-                foreach (var table in tables)
+                if (supportedLanguageCodes.Contains(parent) || supportedLanguageCodes.Contains(canonical))
                 {
-                    if (table.Value != null && Canonicalize(table.Key) == parent)
-                        return table.Key;
+                    foreach (var table in tables)
+                    {
+                        if (table.Value != null && Canonicalize(table.Key) == parent)
+                            return table.Key;
+                    }
                 }
             }
             return null;
@@ -72,13 +103,15 @@ namespace ProbablyEdited
 
         public List<UiLanguageOption> GetLanguages()
         {
-            var result = new List<UiLanguageOption>(tables.Count);
-            foreach (var table in tables)
+            var result = new List<UiLanguageOption>(nativeLanguageCodes.Count);
+            foreach (string code in nativeLanguageCodes)
             {
-                if (table.Value == null || table.Key == FollowGame) continue;
-                table.Value.TryGetValue("meta.native_name", out string nativeName);
-                result.Add(new UiLanguageOption(table.Key,
-                    string.IsNullOrWhiteSpace(nativeName) ? table.Key : nativeName));
+                string language = FindLanguage(code);
+                if (language == null) continue;
+                Dictionary<string, string> table = tables[language];
+                table.TryGetValue("meta.native_name", out string nativeName);
+                result.Add(new UiLanguageOption(language,
+                    string.IsNullOrWhiteSpace(nativeName) ? language : nativeName));
             }
             result.Sort(CompareLanguages);
             return result;

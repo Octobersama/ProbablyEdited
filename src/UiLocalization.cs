@@ -10,9 +10,11 @@ namespace ProbablyEdited
         private const string SectionId = "interface";
         private const string OptionId = "ui_language";
         private readonly List<string> optionCodes = new List<string>();
+        private readonly List<string> nativeLanguageCodes = new List<string>();
         private readonly Func<string, string> activeLookup;
         private UiLocaleCatalog catalog;
         private string activeLanguage;
+        private bool nativeLanguagesLoaded;
 
         public UiLocalization()
         {
@@ -31,7 +33,7 @@ namespace ProbablyEdited
 
         public void Attach(LoadedMod mod)
         {
-            catalog = new UiLocaleCatalog(mod.Localization);
+            catalog = new UiLocaleCatalog(mod.Localization, Array.Empty<string>());
             ActivateForEditor();
         }
 
@@ -39,12 +41,14 @@ namespace ProbablyEdited
         {
             if (catalog == null)
                 throw new InvalidOperationException("The mod's localization assets are not ready.");
+            RefreshNativeLanguages();
             activeLanguage = catalog.ResolveLanguage(ReadPreference(), GetGameLanguage());
             UiText.Configure(activeLookup, UiLocaleCatalog.GetCulture(activeLanguage));
         }
 
         public string GetOptionText(string key)
         {
+            RefreshNativeLanguages();
             if (catalog == null)
                 return ModHelper.GetLocalized(ModEntry.ModId, key);
             string language = catalog.ResolveLanguage(ReadPreference(), GetGameLanguage());
@@ -53,6 +57,7 @@ namespace ProbablyEdited
 
         public string FormatOptionText(string key, params object[] arguments)
         {
+            RefreshNativeLanguages();
             string language = catalog == null ? GetGameLanguage()
                 : catalog.ResolveLanguage(ReadPreference(), GetGameLanguage());
             return string.Format(UiLocaleCatalog.GetCulture(language), GetOptionText(key), arguments);
@@ -76,14 +81,6 @@ namespace ProbablyEdited
                     captions.Add(language.NativeName);
                 }
             }
-
-            string preference = ReadPreference();
-            if (preference != UiLocaleCatalog.FollowGame && (catalog == null || catalog.FindLanguage(preference) == null))
-            {
-                // Preserve an unavailable language preference for a later resource update.
-                optionCodes.Add(preference);
-                captions.Add(GetOptionText("options.unavailable_language") + " [" + preference + "]");
-            }
             return captions.ToArray();
         }
 
@@ -91,8 +88,9 @@ namespace ProbablyEdited
         {
             if (optionCodes.Count == 0) GetLanguageOptions();
             string preference = ReadPreference();
-            string language = preference == UiLocaleCatalog.FollowGame ? preference
-                : catalog?.FindLanguage(preference) ?? preference;
+            string language = preference == UiLocaleCatalog.FollowGame
+                ? UiLocaleCatalog.FollowGame
+                : catalog?.FindLanguage(preference) ?? UiLocaleCatalog.FollowGame;
             for (int i = 0; i < optionCodes.Count; i++)
             {
                 if (string.Equals(optionCodes[i], language, StringComparison.OrdinalIgnoreCase)) return i;
@@ -115,6 +113,24 @@ namespace ProbablyEdited
             return string.IsNullOrEmpty(preference) ? UiLocaleCatalog.FollowGame : preference;
         }
 
+        private void RefreshNativeLanguages()
+        {
+            if (catalog == null || nativeLanguagesLoaded) return;
+            ValueTuple<string, string>[] choices = NativeGameLanguageChoices.GetChoices();
+            if (choices == null || choices.Length == 0) return;
+
+            nativeLanguageCodes.Clear();
+            foreach (ValueTuple<string, string> choice in choices)
+            {
+                if (!string.IsNullOrWhiteSpace(choice.Item1))
+                    nativeLanguageCodes.Add(choice.Item1);
+            }
+            if (nativeLanguageCodes.Count == 0) return;
+
+            catalog.SetNativeLanguages(nativeLanguageCodes);
+            nativeLanguagesLoaded = true;
+        }
+
         private static string GetGameLanguage()
         {
             return ModHelper.GetCurrentLocale()?.Identifier.Code ?? "en";
@@ -124,6 +140,8 @@ namespace ProbablyEdited
         {
             ModHelper.RemoveGameOptions(ModEntry.ModId);
             optionCodes.Clear();
+            nativeLanguageCodes.Clear();
+            nativeLanguagesLoaded = false;
             catalog = null;
             activeLanguage = null;
             UiText.Reset();

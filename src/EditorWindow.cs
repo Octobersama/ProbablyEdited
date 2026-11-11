@@ -68,6 +68,7 @@ namespace ProbablyEdited
         private string _replacementDraft = string.Empty;
         private string _selectedCategory;
         private string _selectedSource;
+        private bool _allSourcesExplicitlySelected;
         private int _modifiedFilter;
         private int _page;
         private TextEntry _selectedEntry;
@@ -267,7 +268,7 @@ namespace ProbablyEdited
             builder.BeginRow(8f, TextAnchor.MiddleLeft);
             builder.AddLabel(UiText.Get("editor.filter.source"));
             builder.Last.SetFixedWidth(72f);
-            builder.AddDropdown(BuildSourceOptions(), 0, OnSourceChanged, "source");
+            builder.AddDropdown(BuildSourceOptions(), FindValueIndex(_sourceValues, _selectedSource), OnSourceChanged, "source");
             _sourceDropdown = builder.Last;
             _sourceDropdown.SetFixedWidth(190f);
             builder.AddDropdown(BuildModifiedOptions(), _modifiedFilter, OnModifiedChanged, "modified");
@@ -867,36 +868,30 @@ namespace ProbablyEdited
             for (int i = 0; i < entries.Count; i++)
             {
                 TextEntry entry = entries[i];
-                if (entry == null)
-                {
-                    continue;
-                }
+                if (entry == null) continue;
 
                 string sourceId = entry.Id.SourceId ?? string.Empty;
                 sourceIds.Add(sourceId);
                 if (!sourceNames.ContainsKey(sourceId))
-                {
                     sourceNames.Add(sourceId, CatalogPresentation.SourceName(entry) ?? string.Empty);
-                }
             }
 
-            List<string> sorted = new List<string>(sourceIds);
-            sorted.Sort(StringComparer.OrdinalIgnoreCase);
-            _sourceValues = new List<string>(sorted.Count + 1) { null };
-            _sourceLabels = new List<string>(sorted.Count + 1) { UiText.Get("editor.filter.source.all") };
-            for (int i = 0; i < sorted.Count; i++)
+            _selectedSource = SourceFilterChoices.ResolveSelection(
+                sourceIds, _selectedSource, _allSourcesExplicitlySelected, GameTextCatalog.GameSourceId);
+            _sourceValues = SourceFilterChoices.BuildValues(sourceIds, GameTextCatalog.GameSourceId);
+            _sourceLabels = new List<string>(_sourceValues.Count);
+            foreach (string sourceId in _sourceValues)
             {
-                string sourceId = sorted[i];
+                if (sourceId == null)
+                {
+                    _sourceLabels.Add(UiText.Get("editor.filter.source.all"));
+                    continue;
+                }
+
                 string sourceName = sourceNames[sourceId];
-                _sourceValues.Add(sourceId);
                 _sourceLabels.Add(string.IsNullOrWhiteSpace(sourceName) || string.Equals(sourceName, sourceId, StringComparison.Ordinal)
                     ? UiText.Get("editor.detail.unknown_source")
                     : sourceName);
-            }
-
-            if (_selectedSource != null && !sourceIds.Contains(_selectedSource))
-            {
-                _selectedSource = null;
             }
         }
 
@@ -933,6 +928,7 @@ namespace ProbablyEdited
             }
 
             _selectedSource = _sourceValues[index];
+            _allSourcesExplicitlySelected = _selectedSource == null;
             _page = 0;
             RefreshRows();
         }

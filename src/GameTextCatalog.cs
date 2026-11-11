@@ -1,9 +1,7 @@
-using HarmonyLib;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Reflection;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.Localization;
@@ -16,7 +14,7 @@ namespace ProbablyEdited
 {
     internal sealed class GameTextCatalog : IDisposable
     {
-        private static readonly FieldInfo NativeLocaleChoices = AccessTools.Field(typeof(MainMenuUIController), "LOCALE_DROPDOWN");
+        public const string GameSourceId = "game";
 
         private readonly Dictionary<string, Locale> locales = new Dictionary<string, Locale>(StringComparer.Ordinal);
         private readonly Dictionary<string, IList<StringTable>> tables = new Dictionary<string, IList<StringTable>>(StringComparer.Ordinal);
@@ -41,7 +39,7 @@ namespace ProbablyEdited
 
         public void RefreshLocales()
         {
-            var choices = NativeLocaleChoices?.GetValue(null) as ValueTuple<string, string>[];
+            var choices = NativeGameLanguageChoices.GetChoices();
             if (choices == null || choices.Length == 0)
                 throw new InvalidOperationException(UiText.Get("catalog.error.native_locale_choices"));
 
@@ -95,13 +93,13 @@ namespace ProbablyEdited
                     StringTable fallback = FindEnglishTable(tableId);
                     foreach (var key in table.SharedData.Entries)
                     {
-                        var id = new TextId("game", code, tableId, key.Id.ToString(CultureInfo.InvariantCulture));
+                        var id = new TextId(GameSourceId, code, tableId, key.Id.ToString(CultureInfo.InvariantCulture));
                         if (!bindings.TryGetValue(id, out var binding))
                         {
                             var value = table.GetEntry(key.Id);
                             var fallbackValue = fallback?.GetEntry(key.Id);
                             bool isFallback = value == null || string.IsNullOrEmpty(value.Value);
-                            string fallbackText = Baseline(new TextId("game", "en", tableId, id.Key), fallbackValue?.Value ?? key.Key);
+                            string fallbackText = Baseline(new TextId(GameSourceId, "en", tableId, id.Key), fallbackValue?.Value ?? key.Key);
                             string original = isFallback ? fallbackText : value.Value;
                             bool smart = isFallback ? fallbackValue?.IsSmart ?? value?.IsSmart ?? false : value.IsSmart;
                             var entry = new TextEntry(id, string.Empty, PlayerStore.VERSION, table.TableCollectionName,
