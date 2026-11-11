@@ -11,7 +11,6 @@ namespace ProbablyEdited
     public sealed class TextDiffHighlighter : IDisposable
     {
         private static readonly Color32 RemovedBackground = new Color32(214, 69, 61, 88);
-        private static readonly Color32 RemovedStrike = new Color32(214, 69, 61, 235);
         private static readonly Color32 AddedBackground = new Color32(58, 170, 92, 88);
 
         private readonly TMP_InputField _original;
@@ -19,10 +18,8 @@ namespace ProbablyEdited
         private readonly TMP_Text _originalText;
         private readonly TMP_Text _replacementText;
         private readonly TextDiffGraphic _originalBackground;
-        private readonly TextDiffGraphic _originalStrike;
         private readonly TextDiffGraphic _replacementBackground;
         private readonly List<TextDiffQuad> _originalBackgroundQuads = new List<TextDiffQuad>();
-        private readonly List<TextDiffQuad> _originalStrikeQuads = new List<TextDiffQuad>();
         private readonly List<TextDiffQuad> _replacementBackgroundQuads = new List<TextDiffQuad>();
 
         private TextDiffResult _diff;
@@ -54,9 +51,8 @@ namespace ProbablyEdited
             _originalText = original.textComponent;
             _replacementText = replacement.textComponent;
 
-            _originalBackground = CreateGraphic(_originalText, "Deleted text background", false);
-            _originalStrike = CreateGraphic(_originalText, "Deleted text strike", true);
-            _replacementBackground = CreateGraphic(_replacementText, "Added text background", false);
+            _originalBackground = CreateGraphic(_originalText, "Deleted text background");
+            _replacementBackground = CreateGraphic(_replacementText, "Added text background");
 
             _original.onValueChanged.AddListener(OnInputValueChanged);
             _replacement.onValueChanged.AddListener(OnInputValueChanged);
@@ -105,15 +101,14 @@ namespace ProbablyEdited
                 _replacementText.OnPreRenderText -= OnReplacementTextPreRender;
 
             DestroyGraphic(_originalBackground);
-            DestroyGraphic(_originalStrike);
             DestroyGraphic(_replacementBackground);
         }
 
-        private static TextDiffGraphic CreateGraphic(TMP_Text text, string name, bool drawAfterText)
+        private static TextDiffGraphic CreateGraphic(TMP_Text text, string name)
         {
             var gameObject = new GameObject(name, typeof(RectTransform));
             TextDiffGraphic graphic = gameObject.AddComponent<TextDiffGraphic>();
-            graphic.SetReference(text.rectTransform, drawAfterText);
+            graphic.SetReference(text.rectTransform);
             return graphic;
         }
 
@@ -146,14 +141,13 @@ namespace ProbablyEdited
 
         private void RefreshOriginalGeometry(TMP_TextInfo textInfo)
         {
-            BuildGeometry(textInfo, _originalValue, _diff.Removed, true, _originalBackgroundQuads, _originalStrikeQuads);
+            BuildGeometry(textInfo, _originalValue, _diff.Removed, _originalBackgroundQuads);
             _originalBackground.SetQuads(_originalBackgroundQuads, RemovedBackground);
-            _originalStrike.SetQuads(_originalStrikeQuads, RemovedStrike);
         }
 
         private void RefreshReplacementGeometry(TMP_TextInfo textInfo)
         {
-            BuildGeometry(textInfo, _replacementValue, _diff.Added, false, _replacementBackgroundQuads, null);
+            BuildGeometry(textInfo, _replacementValue, _diff.Added, _replacementBackgroundQuads);
             _replacementBackground.SetQuads(_replacementBackgroundQuads, AddedBackground);
         }
 
@@ -161,14 +155,9 @@ namespace ProbablyEdited
             TMP_TextInfo textInfo,
             string rawText,
             IReadOnlyList<TextDiffSpan> spans,
-            bool strikeThrough,
-            List<TextDiffQuad> backgroundQuads,
-            List<TextDiffQuad> strikeQuads)
+            List<TextDiffQuad> backgroundQuads)
         {
             backgroundQuads.Clear();
-            if (strikeQuads != null)
-                strikeQuads.Clear();
-
             if (textInfo == null || textInfo.characterInfo == null)
                 return;
 
@@ -177,7 +166,6 @@ namespace ProbablyEdited
             {
                 TextDiffSpan span = spans[spanIndex];
                 int firstBackgroundQuad = backgroundQuads.Count;
-                int firstStrikeQuad = strikeQuads == null ? 0 : strikeQuads.Count;
 
                 for (int characterIndex = 0; characterIndex < characterCount; characterIndex++)
                 {
@@ -191,28 +179,9 @@ namespace ProbablyEdited
 
                     Rect bounds = GetCharacterBounds(character, textInfo);
                     AddQuad(backgroundQuads, bounds, character.lineNumber, firstBackgroundQuad);
-                    if (strikeThrough)
-                    {
-                        float thickness = Mathf.Max(1f, bounds.height * 0.045f);
-                        float centerY = (bounds.yMin + bounds.yMax) * 0.5f;
-                        var strikeBounds = Rect.MinMaxRect(
-                            bounds.xMin,
-                            centerY - thickness * 0.5f,
-                            bounds.xMax,
-                            centerY + thickness * 0.5f);
-                        AddQuad(strikeQuads, strikeBounds, character.lineNumber, firstStrikeQuad);
-                    }
                 }
 
-                AddLineBreakQuads(
-                    textInfo,
-                    rawText,
-                    span,
-                    backgroundQuads,
-                    strikeQuads,
-                    firstBackgroundQuad,
-                    firstStrikeQuad,
-                    strikeThrough);
+                AddLineBreakQuads(textInfo, rawText, span, backgroundQuads, firstBackgroundQuad);
             }
         }
 
@@ -246,10 +215,7 @@ namespace ProbablyEdited
             string rawText,
             TextDiffSpan span,
             List<TextDiffQuad> backgroundQuads,
-            List<TextDiffQuad> strikeQuads,
-            int firstBackgroundQuad,
-            int firstStrikeQuad,
-            bool strikeThrough)
+            int firstBackgroundQuad)
         {
             int end = Math.Min(span.End, rawText.Length);
             for (int index = Math.Max(0, span.Start); index < end; index++)
@@ -263,17 +229,6 @@ namespace ProbablyEdited
                 int lineNumber = FindLineNumber(textInfo, index);
                 Rect bounds = GetLineBreakBounds(textInfo, lineNumber, index);
                 AddQuad(backgroundQuads, bounds, lineNumber, firstBackgroundQuad);
-                if (strikeThrough)
-                {
-                    float thickness = Mathf.Max(1f, bounds.height * 0.045f);
-                    float centerY = (bounds.yMin + bounds.yMax) * 0.5f;
-                    var strikeBounds = Rect.MinMaxRect(
-                        bounds.xMin,
-                        centerY - thickness * 0.5f,
-                        bounds.xMax,
-                        centerY + thickness * 0.5f);
-                    AddQuad(strikeQuads, strikeBounds, lineNumber, firstStrikeQuad);
-                }
             }
         }
 
@@ -380,13 +335,11 @@ namespace ProbablyEdited
         private Rect _quadBounds;
         private bool _hasQuadBounds;
         private RectTransform _reference;
-        private bool _drawAfterText;
         private Color32 _quadColor = Color.white;
 
-        public void SetReference(RectTransform reference, bool drawAfterText)
+        public void SetReference(RectTransform reference)
         {
             _reference = reference;
-            _drawAfterText = drawAfterText;
             raycastTarget = false;
             maskable = true;
             color = Color.white;
@@ -519,11 +472,7 @@ namespace ProbablyEdited
                 overlay.SetParent(_reference.parent, false);
                 PlaceRelativeToText(overlay);
             }
-            else if (_drawAfterText && overlay.GetSiblingIndex() <= _reference.GetSiblingIndex())
-            {
-                overlay.SetSiblingIndex(_reference.GetSiblingIndex() + 1);
-            }
-            else if (!_drawAfterText && overlay.GetSiblingIndex() >= _reference.GetSiblingIndex())
+            else if (overlay.GetSiblingIndex() >= _reference.GetSiblingIndex())
             {
                 overlay.SetSiblingIndex(_reference.GetSiblingIndex());
             }
@@ -546,8 +495,7 @@ namespace ProbablyEdited
 
         private void PlaceRelativeToText(RectTransform overlay)
         {
-            int textIndex = _reference.GetSiblingIndex();
-            overlay.SetSiblingIndex(_drawAfterText ? textIndex + 1 : textIndex);
+            overlay.SetSiblingIndex(_reference.GetSiblingIndex());
         }
     }
 

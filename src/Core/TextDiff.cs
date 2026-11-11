@@ -31,7 +31,7 @@ namespace ProbablyEdited
         }
     }
 
-    /// <summary>Compares Unicode text elements without interpreting TMP formatting tags.</summary>
+    /// <summary>Compares CJK characters and whole words without interpreting TMP formatting tags.</summary>
     public static class TextDiff
     {
         private static readonly TextDiffResult EmptyResult = new TextDiffResult(
@@ -45,26 +45,24 @@ namespace ProbablyEdited
             if (string.Equals(original, replacement, StringComparison.Ordinal))
                 return EmptyResult;
 
-            int[] originalStarts = StringInfo.ParseCombiningCharacters(original);
-            int[] replacementStarts = StringInfo.ParseCombiningCharacters(replacement);
-            int originalCount = originalStarts.Length;
-            int replacementCount = replacementStarts.Length;
+            TextTokens originalTokens = Tokenize(original);
+            TextTokens replacementTokens = Tokenize(replacement);
+            int originalCount = originalTokens.Count;
+            int replacementCount = replacementTokens.Count;
 
             int prefixCount = 0;
             while (prefixCount < originalCount && prefixCount < replacementCount &&
-                ElementsEqual(original, originalStarts, prefixCount, replacement, replacementStarts, prefixCount))
+                TokensEqual(originalTokens, prefixCount, replacementTokens, prefixCount))
             {
                 prefixCount++;
             }
 
             int suffixCount = 0;
             while (suffixCount < originalCount - prefixCount && suffixCount < replacementCount - prefixCount &&
-                ElementsEqual(
-                    original,
-                    originalStarts,
+                TokensEqual(
+                    originalTokens,
                     originalCount - suffixCount - 1,
-                    replacement,
-                    replacementStarts,
+                    replacementTokens,
                     replacementCount - suffixCount - 1))
             {
                 suffixCount++;
@@ -75,19 +73,17 @@ namespace ProbablyEdited
             if (originalMiddleCount == 0 && replacementMiddleCount == 0)
                 return EmptyResult;
 
-            List<ElementMatch> matches = null;
+            List<TokenMatch> matches = null;
             if (originalMiddleCount > 0 && replacementMiddleCount > 0)
             {
-                matches = new List<ElementMatch>();
+                matches = new List<TokenMatch>();
                 var forward = new int[replacementMiddleCount + 1];
                 var backward = new int[replacementMiddleCount + 1];
                 FindMatches(
-                    original,
-                    originalStarts,
+                    originalTokens,
                     prefixCount,
                     originalMiddleCount,
-                    replacement,
-                    replacementStarts,
+                    replacementTokens,
                     prefixCount,
                     replacementMiddleCount,
                     forward,
@@ -106,16 +102,16 @@ namespace ProbablyEdited
             {
                 for (int i = 0; i < matches.Count; i++)
                 {
-                    ElementMatch match = matches[i];
-                    AddSpan(original, originalStarts, nextOriginal, match.OriginalIndex - nextOriginal, removed);
-                    AddSpan(replacement, replacementStarts, nextReplacement, match.ReplacementIndex - nextReplacement, added);
+                    TokenMatch match = matches[i];
+                    AddSpan(originalTokens, nextOriginal, match.OriginalIndex - nextOriginal, removed);
+                    AddSpan(replacementTokens, nextReplacement, match.ReplacementIndex - nextReplacement, added);
                     nextOriginal = match.OriginalIndex + 1;
                     nextReplacement = match.ReplacementIndex + 1;
                 }
             }
 
-            AddSpan(original, originalStarts, nextOriginal, originalMiddleEnd - nextOriginal, removed);
-            AddSpan(replacement, replacementStarts, nextReplacement, replacementMiddleEnd - nextReplacement, added);
+            AddSpan(originalTokens, nextOriginal, originalMiddleEnd - nextOriginal, removed);
+            AddSpan(replacementTokens, nextReplacement, replacementMiddleEnd - nextReplacement, added);
 
             if (removed.Count == 0 && added.Count == 0)
                 return EmptyResult;
@@ -124,17 +120,15 @@ namespace ProbablyEdited
         }
 
         private static void FindMatches(
-            string original,
-            int[] originalStarts,
+            TextTokens original,
             int originalStart,
             int originalCount,
-            string replacement,
-            int[] replacementStarts,
+            TextTokens replacement,
             int replacementStart,
             int replacementCount,
             int[] forward,
             int[] backward,
-            List<ElementMatch> matches)
+            List<TokenMatch> matches)
         {
             if (originalCount == 0 || replacementCount == 0)
                 return;
@@ -143,15 +137,9 @@ namespace ProbablyEdited
             {
                 for (int i = 0; i < replacementCount; i++)
                 {
-                    if (ElementsEqual(
-                        original,
-                        originalStarts,
-                        originalStart,
-                        replacement,
-                        replacementStarts,
-                        replacementStart + i))
+                    if (TokensEqual(original, originalStart, replacement, replacementStart + i))
                     {
-                        matches.Add(new ElementMatch(originalStart, replacementStart + i));
+                        matches.Add(new TokenMatch(originalStart, replacementStart + i));
                         break;
                     }
                 }
@@ -163,15 +151,9 @@ namespace ProbablyEdited
             {
                 for (int i = 0; i < originalCount; i++)
                 {
-                    if (ElementsEqual(
-                        original,
-                        originalStarts,
-                        originalStart + i,
-                        replacement,
-                        replacementStarts,
-                        replacementStart))
+                    if (TokensEqual(original, originalStart + i, replacement, replacementStart))
                     {
-                        matches.Add(new ElementMatch(originalStart + i, replacementStart));
+                        matches.Add(new TokenMatch(originalStart + i, replacementStart));
                         break;
                     }
                 }
@@ -182,12 +164,10 @@ namespace ProbablyEdited
             int originalLeftCount = originalCount / 2;
             int replacementSplit = FindMiddleSplit(
                 original,
-                originalStarts,
                 originalStart,
                 originalLeftCount,
                 originalCount - originalLeftCount,
                 replacement,
-                replacementStarts,
                 replacementStart,
                 replacementCount,
                 forward,
@@ -195,11 +175,9 @@ namespace ProbablyEdited
 
             FindMatches(
                 original,
-                originalStarts,
                 originalStart,
                 originalLeftCount,
                 replacement,
-                replacementStarts,
                 replacementStart,
                 replacementSplit,
                 forward,
@@ -207,11 +185,9 @@ namespace ProbablyEdited
                 matches);
             FindMatches(
                 original,
-                originalStarts,
                 originalStart + originalLeftCount,
                 originalCount - originalLeftCount,
                 replacement,
-                replacementStarts,
                 replacementStart + replacementSplit,
                 replacementCount - replacementSplit,
                 forward,
@@ -220,13 +196,11 @@ namespace ProbablyEdited
         }
 
         private static int FindMiddleSplit(
-            string original,
-            int[] originalStarts,
+            TextTokens original,
             int originalStart,
             int originalLeftCount,
             int originalRightCount,
-            string replacement,
-            int[] replacementStarts,
+            TextTokens replacement,
             int replacementStart,
             int replacementCount,
             int[] forward,
@@ -239,13 +213,7 @@ namespace ProbablyEdited
                 for (int j = 1; j <= replacementCount; j++)
                 {
                     int previousRow = forward[j];
-                    if (ElementsEqual(
-                        original,
-                        originalStarts,
-                        originalStart + i,
-                        replacement,
-                        replacementStarts,
-                        replacementStart + j - 1))
+                    if (TokensEqual(original, originalStart + i, replacement, replacementStart + j - 1))
                     {
                         forward[j] = diagonal + 1;
                     }
@@ -265,12 +233,10 @@ namespace ProbablyEdited
                 for (int j = replacementCount - 1; j >= 0; j--)
                 {
                     int previousRow = backward[j];
-                    if (ElementsEqual(
+                    if (TokensEqual(
                         original,
-                        originalStarts,
                         originalStart + originalLeftCount + i,
                         replacement,
-                        replacementStarts,
                         replacementStart + j))
                     {
                         backward[j] = diagonal + 1;
@@ -299,50 +265,167 @@ namespace ProbablyEdited
             return bestSplit;
         }
 
-        private static bool ElementsEqual(
-            string first,
-            int[] firstStarts,
+        private static bool TokensEqual(
+            TextTokens first,
             int firstIndex,
-            string second,
-            int[] secondStarts,
+            TextTokens second,
             int secondIndex)
         {
-            int firstStart = firstStarts[firstIndex];
-            int secondStart = secondStarts[secondIndex];
-            int firstLength = ElementLength(first, firstStarts, firstIndex);
-            int secondLength = ElementLength(second, secondStarts, secondIndex);
+            int firstStart = first.Starts[firstIndex];
+            int secondStart = second.Starts[secondIndex];
+            int firstLength = TokenLength(first, firstIndex);
+            int secondLength = TokenLength(second, secondIndex);
             return firstLength == secondLength &&
-                string.CompareOrdinal(first, firstStart, second, secondStart, firstLength) == 0;
+                string.CompareOrdinal(first.Text, firstStart, second.Text, secondStart, firstLength) == 0;
         }
 
-        private static int ElementLength(string text, int[] starts, int index)
+        private static int TokenLength(TextTokens tokens, int index)
         {
-            int end = index + 1 < starts.Length ? starts[index + 1] : text.Length;
-            return end - starts[index];
+            int end = index + 1 < tokens.Count ? tokens.Starts[index + 1] : tokens.Text.Length;
+            return end - tokens.Starts[index];
         }
 
         private static void AddSpan(
-            string text,
-            int[] starts,
-            int startElement,
-            int elementCount,
+            TextTokens tokens,
+            int startToken,
+            int tokenCount,
             List<TextDiffSpan> spans)
         {
-            if (elementCount <= 0)
+            if (tokenCount <= 0)
                 return;
 
-            int start = starts[startElement];
-            int endElement = startElement + elementCount;
-            int end = endElement < starts.Length ? starts[endElement] : text.Length;
+            int start = tokens.Starts[startToken];
+            int endToken = startToken + tokenCount;
+            int end = endToken < tokens.Count ? tokens.Starts[endToken] : tokens.Text.Length;
             spans.Add(new TextDiffSpan(start, end - start));
         }
 
-        private readonly struct ElementMatch
+        private static TextTokens Tokenize(string text)
+        {
+            // Reuse the grapheme-start buffer and compact it to token starts in place.
+            int[] starts = StringInfo.ParseCombiningCharacters(text);
+            int tokenCount = 0;
+            bool inWordRun = false;
+
+            for (int elementIndex = 0; elementIndex < starts.Length; elementIndex++)
+            {
+                int start = starts[elementIndex];
+                int codePoint = GetCodePoint(text, start);
+                UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(text, start);
+
+                if (IsCjkCharacter(codePoint))
+                {
+                    starts[tokenCount++] = start;
+                    inWordRun = false;
+                    continue;
+                }
+
+                if (IsTextElementExtender(codePoint, category))
+                {
+                    if (tokenCount == 0)
+                        starts[tokenCount++] = start;
+                    continue;
+                }
+
+                if (IsLetter(category) || IsNumber(category))
+                {
+                    if (!inWordRun)
+                        starts[tokenCount++] = start;
+                    inWordRun = true;
+                    continue;
+                }
+
+                starts[tokenCount++] = start;
+                inWordRun = false;
+            }
+
+            return new TextTokens(text, starts, tokenCount);
+        }
+
+        private static int GetCodePoint(string text, int index)
+        {
+            char first = text[index];
+            if (char.IsHighSurrogate(first) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]))
+                return char.ConvertToUtf32(first, text[index + 1]);
+
+            return first;
+        }
+
+        private static bool IsCjkCharacter(int codePoint)
+        {
+            // These script blocks keep Han, Kana, and Hangul out of adjacent word runs.
+            return IsInRange(codePoint, 0x2E80, 0x2FFF) ||
+                IsInRange(codePoint, 0x3005, 0x3007) ||
+                IsInRange(codePoint, 0x3021, 0x3029) ||
+                IsInRange(codePoint, 0x3038, 0x303B) ||
+                IsInRange(codePoint, 0x3040, 0x30FF) ||
+                IsInRange(codePoint, 0x31F0, 0x31FF) ||
+                IsInRange(codePoint, 0x3400, 0x4DBF) ||
+                IsInRange(codePoint, 0x4E00, 0x9FFF) ||
+                IsInRange(codePoint, 0xF900, 0xFAFF) ||
+                IsInRange(codePoint, 0xFF65, 0xFF9F) ||
+                IsInRange(codePoint, 0x1100, 0x11FF) ||
+                IsInRange(codePoint, 0x3130, 0x318F) ||
+                IsInRange(codePoint, 0xA960, 0xA97F) ||
+                IsInRange(codePoint, 0xAC00, 0xD7AF) ||
+                IsInRange(codePoint, 0xD7B0, 0xD7FF) ||
+                IsInRange(codePoint, 0x1AFF0, 0x1AFFF) ||
+                IsInRange(codePoint, 0x1B000, 0x1B16F) ||
+                IsInRange(codePoint, 0x20000, 0x2EE5F) ||
+                IsInRange(codePoint, 0x2F800, 0x2FA1F) ||
+                IsInRange(codePoint, 0x30000, 0x323AF);
+        }
+
+        private static bool IsTextElementExtender(int codePoint, UnicodeCategory category)
+        {
+            return category == UnicodeCategory.NonSpacingMark ||
+                category == UnicodeCategory.SpacingCombiningMark ||
+                category == UnicodeCategory.EnclosingMark ||
+                IsInRange(codePoint, 0xFE00, 0xFE0F) ||
+                IsInRange(codePoint, 0xE0100, 0xE01EF);
+        }
+
+        private static bool IsLetter(UnicodeCategory category)
+        {
+            return category == UnicodeCategory.UppercaseLetter ||
+                category == UnicodeCategory.LowercaseLetter ||
+                category == UnicodeCategory.TitlecaseLetter ||
+                category == UnicodeCategory.ModifierLetter ||
+                category == UnicodeCategory.OtherLetter;
+        }
+
+        private static bool IsNumber(UnicodeCategory category)
+        {
+            return category == UnicodeCategory.DecimalDigitNumber ||
+                category == UnicodeCategory.LetterNumber ||
+                category == UnicodeCategory.OtherNumber;
+        }
+
+        private static bool IsInRange(int codePoint, int start, int end)
+        {
+            return codePoint >= start && codePoint <= end;
+        }
+
+        private readonly struct TextTokens
+        {
+            public string Text { get; }
+            public int[] Starts { get; }
+            public int Count { get; }
+
+            public TextTokens(string text, int[] starts, int count)
+            {
+                Text = text;
+                Starts = starts;
+                Count = count;
+            }
+        }
+
+        private readonly struct TokenMatch
         {
             public int OriginalIndex { get; }
             public int ReplacementIndex { get; }
 
-            public ElementMatch(int originalIndex, int replacementIndex)
+            public TokenMatch(int originalIndex, int replacementIndex)
             {
                 OriginalIndex = originalIndex;
                 ReplacementIndex = replacementIndex;
@@ -350,3 +433,4 @@ namespace ProbablyEdited
         }
     }
 }
+
