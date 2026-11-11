@@ -17,6 +17,11 @@ namespace ProbablyEdited
         private const string CategoryHelpLinkId = "probably_edited.editor:category_help";
         private const float MainWindowWidthFraction = 0.84f;
         private const float MainWindowHeightFraction = 0.90f;
+        private const float MainWindowHorizontalGutter = 48f;
+        private const float MainWindowVerticalGutter = 24f;
+        private const float MainWindowScreenMargin = 16f;
+        private const float ResultRowHeight = 48f;
+        private const float ResultRowFontScale = 0.88f;
 
         private static readonly List<string> ModifiedOptions = new List<string>
         {
@@ -63,6 +68,7 @@ namespace ProbablyEdited
         private string _pendingTransitionName;
         private RectTransform _resultRowsHost;
         private float _resultRowWidth;
+        private readonly List<float> _rowBaseFontSizes = new List<float>();
         private readonly List<TextEntry> _rowEntries = new List<TextEntry>();
         private readonly List<CustomUIElement> _rowElements = new List<CustomUIElement>();
         private readonly List<TextMeshProUGUI> _rowTextCandidates = new List<TextMeshProUGUI>();
@@ -213,6 +219,20 @@ namespace ProbablyEdited
             panel.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, panelSize.y);
             panel.anchoredPosition = Vector2.zero;
             builder.Center();
+
+            RectTransform contentRoot = window.ContentRoot;
+            Vector2 contentSize = contentRoot.rect.size;
+            Vector2 contentPosition = contentRoot.anchoredPosition;
+            Vector2 maxPanelSize = new Vector2(
+                Mathf.Max(0f, viewportSize.x - MainWindowScreenMargin * 2f),
+                Mathf.Max(0f, viewportSize.y - MainWindowScreenMargin * 2f));
+            panelSize = Vector2.Min(panelSize + new Vector2(
+                MainWindowHorizontalGutter * 2f, MainWindowVerticalGutter * 2f), maxPanelSize);
+            panel.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, panelSize.x);
+            panel.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, panelSize.y);
+            contentRoot.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, contentSize.x);
+            contentRoot.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, contentSize.y);
+            contentRoot.anchoredPosition = contentPosition;
 
             float contentWidth = window.ContentRoot.rect.width;
             float resultsPanelWidth = Mathf.Min(Mathf.Max(contentWidth * 0.34f, 360f), contentWidth * 0.46f);
@@ -481,6 +501,7 @@ namespace ProbablyEdited
             _resultRowsHost = null;
             _rowEntries.Clear();
             _rowElements.Clear();
+            _rowBaseFontSizes.Clear();
             _emptyResultsLabel = null;
             _localeDropdown = null;
             _categoryDropdown = null;
@@ -1079,7 +1100,7 @@ namespace ProbablyEdited
                             builder.AddButton(string.Empty, () => RequestSelection(_rowEntries[rowBindingIndex]), "result_row_" + rowBindingIndex);
                             row = builder.Last;
                             BindVisibleMetaText(row);
-                            row.SetPreferredSize(_resultRowWidth, 40f);
+                            row.SetPreferredSize(_resultRowWidth, ResultRowHeight);
                             if (row.text != null)
                             {
                                 row.text.alignment = TextAlignmentOptions.MidlineLeft;
@@ -1089,6 +1110,7 @@ namespace ProbablyEdited
 
                             _rowEntries.Add(null);
                             _rowElements.Add(row);
+                            _rowBaseFontSizes.Add(row.text != null ? row.text.fontSize : 0f);
                         }
                         else
                         {
@@ -1097,7 +1119,7 @@ namespace ProbablyEdited
 
                         _rowEntries[visibleRowCount] = entry;
                         row.root.SetActive(true);
-                        SetRowText(row, entry);
+                        SetRowText(row, visibleRowCount, entry);
                         row.SetInteractable(!_controller.IsLoading && !_saveApplyPending);
                         visibleRowCount++;
                     }
@@ -1126,7 +1148,7 @@ namespace ProbablyEdited
                 TextEntry entry = _rowEntries[i];
                 if (entry != null && IsSelected(entry))
                 {
-                    SetRowText(_rowElements[i], entry);
+                    SetRowText(_rowElements[i], i, entry);
                     return;
                 }
             }
@@ -1241,13 +1263,18 @@ namespace ProbablyEdited
             }
         }
 
-        private void SetRowText(CustomUIElement row, TextEntry entry)
+        private void SetRowText(CustomUIElement row, int rowIndex, TextEntry entry)
         {
             string text = BuildRowText(entry);
             if (row.text == null || !string.Equals(row.text.text, text, StringComparison.Ordinal))
             {
                 row.SetText(text);
                 NativeFontSupport.Apply(row);
+            }
+
+            if (row.text != null)
+            {
+                row.text.fontSize = _rowBaseFontSizes[rowIndex] * ResultRowFontScale;
             }
         }
 
