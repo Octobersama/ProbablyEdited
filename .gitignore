@@ -5,3 +5,4 @@ dist/
 *.user
 *.suo
 /ProbablyFonts/
+/.playwright-mcp/
