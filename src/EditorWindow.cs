@@ -23,7 +23,6 @@ namespace ProbablyEdited
         private const float ResultRowHeight = 48f;
         private const float ResultRowFontScale = 0.88f;
 
-        private const float SearchClearButtonWidth = 28f;
         private const float SearchClearButtonInset = 2f;
         private const float SearchClearTextInset = 32f;
         private static List<string> BuildModifiedOptions()
@@ -278,7 +277,7 @@ namespace ProbablyEdited
             _searchInput = builder.Last;
             _searchInput.SetFlexible(1f, 0f);
             TextInputContextMenu.Attach(_searchInput, "search");
-            builder.AddButton("×", ClearSearch, "clear_search");
+            builder.AddCloseButton(ClearSearch, "clear_search");
             _clearSearchButton = builder.Last;
             _clearSearchButton.SetTooltip(UiText.Get("search.clear.tooltip"));
             InstallSearchClearButton();
@@ -964,10 +963,9 @@ namespace ProbablyEdited
             RectTransform inputPlate = _searchInput.input.targetGraphic != null
                 ? _searchInput.input.targetGraphic.rectTransform : _searchInput.Rect;
             buttonRect.SetParent(inputPlate, false);
-            buttonRect.anchorMin = new Vector2(1f, 0f);
-            buttonRect.anchorMax = Vector2.one;
+            buttonRect.anchorMin = new Vector2(1f, 0.5f);
+            buttonRect.anchorMax = buttonRect.anchorMin;
             buttonRect.pivot = new Vector2(1f, 0.5f);
-            buttonRect.sizeDelta = new Vector2(SearchClearButtonWidth, -SearchClearButtonInset * 2f);
             buttonRect.anchoredPosition = new Vector2(-SearchClearButtonInset, 0f);
             buttonRect.SetAsLastSibling();
 
@@ -979,19 +977,6 @@ namespace ProbablyEdited
             if (textViewport != null)
                 textViewport.offsetMax = new Vector2(textViewport.offsetMax.x - SearchClearTextInset, textViewport.offsetMax.y);
 
-            BindVisibleMetaText(_clearSearchButton);
-            _clearSearchButton.SetText("×");
-            if (_clearSearchButton.text != null)
-            {
-                _clearSearchButton.text.alignment = TextAlignmentOptions.Center;
-                _clearSearchButton.text.margin = Vector4.zero;
-                RectTransform labelRect = _clearSearchButton.text.rectTransform;
-                labelRect.anchorMin = Vector2.zero;
-                labelRect.anchorMax = Vector2.one;
-                labelRect.offsetMin = Vector2.zero;
-                labelRect.offsetMax = Vector2.zero;
-            }
-            NativeFontSupport.Apply(_clearSearchButton);
             RefreshSearchClearButton();
         }
 
