@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"Impossible de lire le sélecteur de langue 
 catalog.error.load_locale,"Impossible de lire les tables de texte de la langue {0} : {1}"
 catalog.error.load_english,"Impossible de lire les tables de texte anglaises de repli : {0}"
 catalog.error.table_unloaded,"La table de texte a été déchargée. Redémarrez le jeu avant d’appliquer des modifications."
+catalog.error.localization_alias_conflict,"Ce préréglage attribue des textes différents à la même entrée du mod via des alias de langue : {0}"
 catalog.detail.game_base,"Table de chaînes : {0}\nClé : {1}\nClé numérique : {2}\n{3}"
 catalog.detail.game_fallback,"Aucune traduction n’existe pour cette langue ; le texte anglais ou la clé est affiché. Rétablir le texte d’origine restaure la valeur de repli du jeu."
 catalog.detail.game_smart,"Smart String : préserve les variables, les conditions et la structure de format des pluriels."

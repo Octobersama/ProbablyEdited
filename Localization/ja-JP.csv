@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"ゲーム本来の言語選択肢を読み�
 catalog.error.load_locale,"言語{0}のテキストテーブルを読み込めませんでした：{1}"
 catalog.error.load_english,"英語のフォールバックテキストテーブルを読み込めませんでした：{0}"
 catalog.error.table_unloaded,"テキストテーブルがアンロードされました。変更を適用する前にゲームを再起動してください。"
+catalog.error.localization_alias_conflict,"このプリセットでは、言語エイリアス経由で同じMod項目に異なるテキストが割り当てられています：{0}"
 catalog.detail.game_base,"文字列テーブル：{0}\nキー：{1}\n数値キー：{2}\n{3}"
 catalog.detail.game_fallback,"この言語には翻訳がないため、英語のテキストまたはキーが表示されます。元に戻すとゲームのフォールバックが復元されます。"
 catalog.detail.game_smart,"Smart String：変数、条件、複数形の書式構造を保持します。"

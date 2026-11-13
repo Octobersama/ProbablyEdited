@@ -18,7 +18,8 @@ internal static class Program
         Run("regional assets share native dictionaries through lookup, mutation, and restore", RegionalAssetsShareNativeDictionaries, ref failures);
         Run("native UI-language enumeration stays limited to the game picker", NativeLanguageEnumerationUsesPickerChoices, ref failures);
         Run("UI formatting uses its own culture without changing process culture", KeepsFormattingIndependent, ref failures);
-        Console.WriteLine(failures == 0 ? "All 9 localization checks passed." : failures + " localization check(s) failed.");
+        CatalogChecks.Run(ref failures);
+        Console.WriteLine(failures == 0 ? "All localization checks passed." : failures + " localization check(s) failed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -210,13 +211,13 @@ internal static class Program
         finally { UiText.Reset(); }
     }
 
-    private static void Equal<T>(T expected, T actual)
+    internal static void Equal<T>(T expected, T actual)
     {
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
             throw new InvalidOperationException("Expected: " + expected + "; actual: " + actual);
     }
 
-    private static void Run(string name, Action check, ref int failures)
+    internal static void Run(string name, Action check, ref int failures)
     {
         try { check(); Console.WriteLine("PASS " + name); }
         catch (Exception error) { failures++; Console.WriteLine("FAIL " + name + ": " + error); }

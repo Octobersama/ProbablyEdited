@@ -8,6 +8,10 @@
   <ItemGroup>
     <Compile Include="../../src/Core/UiText.cs" Link="Core/UiText.cs" />
     <Compile Include="../../src/Core/UiLocaleCatalog.cs" Link="Core/UiLocaleCatalog.cs" />
+    <Compile Include="../../src/Core/TextId.cs" Link="Core/TextId.cs" />
+    <Compile Include="../../src/Core/TextEntry.cs" Link="Core/TextEntry.cs" />
+    <Compile Include="../../src/GameTextCatalog.cs" Link="GameTextCatalog.cs" />
+    <Compile Include="../../src/CatalogPresentation.cs" Link="CatalogPresentation.cs" />
     <Compile Include="../../src/Core/ModLocalizationAliases.cs" Link="Core/ModLocalizationAliases.cs" />
     <Compile Include="../Shared/TestLocalization.cs" Link="TestLocalization.cs" />
   </ItemGroup>

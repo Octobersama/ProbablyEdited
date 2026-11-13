@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"Der native Sprachauswahldialog des Spiels k
 catalog.error.load_locale,"Die Texttabellen für Sprache {0} konnten nicht gelesen werden: {1}"
 catalog.error.load_english,"Die englischen Texttabellen als Ersatz konnten nicht gelesen werden: {0}"
 catalog.error.table_unloaded,"Die Texttabelle wurde entladen. Starte das Spiel neu, bevor du Änderungen anwendest."
+catalog.error.localization_alias_conflict,"Dieses Preset weist derselben Mod-Textstelle über Sprachaliasse unterschiedliche Texte zu: {0}"
 catalog.detail.game_base,"Zeichenfolgentabelle: {0}\nSchlüssel: {1}\nNumerischer Schlüssel: {2}\n{3}"
 catalog.detail.game_fallback,"Für diese Sprache gibt es keine Übersetzung; angezeigt wird der englische Text oder der Schlüssel. Durch Wiederherstellen des Originals wird der Ersatzwert des Spiels wiederhergestellt."
 catalog.detail.game_smart,"Smart String: Erhält Variablen, Bedingungen und die Pluralformatstruktur."

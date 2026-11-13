@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"No se pudo leer el selector de idioma nativ
 catalog.error.load_locale,"No se pudieron leer las tablas de texto del idioma {0}: {1}"
 catalog.error.load_english,"No se pudieron leer las tablas de texto de reserva en inglés: {0}"
 catalog.error.table_unloaded,"La tabla de texto se ha descargado. Reinicia el juego antes de aplicar cambios."
+catalog.error.localization_alias_conflict,"Este ajuste asigna textos distintos mediante alias de idioma a la misma entrada del mod: {0}"
 catalog.detail.game_base,"Tabla de cadenas: {0}\nClave: {1}\nClave numérica: {2}\n{3}"
 catalog.detail.game_fallback,"Este idioma no tiene traducción; se muestra el texto en inglés o la clave. Al restaurar el original, se restaura el texto alternativo del juego."
 catalog.detail.game_smart,"Smart String: conserva las variables, las condiciones y la estructura de formato de plurales."

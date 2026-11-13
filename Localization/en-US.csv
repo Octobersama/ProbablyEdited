@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"Could not read the game's native language s
 catalog.error.load_locale,"Could not read the text tables for language {0}: {1}"
 catalog.error.load_english,"Could not read the English fallback text tables: {0}"
 catalog.error.table_unloaded,"The text table was unloaded. Restart the game before applying changes."
+catalog.error.localization_alias_conflict,"This preset assigns different text through language aliases to the same mod entry: {0}"
 catalog.detail.game_base,"String table: {0}\nKey: {1}\nNumeric key: {2}\n{3}"
 catalog.detail.game_fallback,"This language has no translation; the English text or key is shown. Restoring the original restores the game's fallback."
 catalog.detail.game_smart,"Smart String: preserves variables, conditions, and plural-format structure."

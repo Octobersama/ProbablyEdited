@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.Localization;
@@ -23,6 +24,11 @@ namespace ProbablyEdited
         private readonly List<AsyncOperationHandle> operations = new List<AsyncOperationHandle>();
         private readonly List<string> codes = new List<string>();
         private readonly List<string> names = new List<string>();
+        // Multiple TextIds may resolve to one dictionary entry, so baseline and apply ownership live there.
+        private readonly Dictionary<ModDictionaryEntryKey, ModTarget> modTargetsByDictionaryEntry = new Dictionary<ModDictionaryEntryKey, ModTarget>();
+        private readonly Dictionary<ModLocaleKey, ModLocaleState> modLocaleStatesByLocale = new Dictionary<ModLocaleKey, ModLocaleState>();
+        private readonly List<ModTarget> modTargets = new List<ModTarget>();
+        private readonly List<ModLocaleState> modLocaleStates = new List<ModLocaleState>();
 
         public IReadOnlyList<string> Codes => codes;
         public IReadOnlyList<string> Names => names;
@@ -126,22 +132,28 @@ namespace ProbablyEdited
                 foreach (string key in keys)
                 {
                     var id = new TextId(mod.Manifest.ID, code, "Localization", key);
-                    if (!bindings.TryGetValue(id, out var binding) || !ReferenceEquals(binding.Mod, mod))
+                    string raw = null;
+                    bool exists = target != null && target.TryGetValue(key, out raw);
+                    string originalText = raw;
+                    if (!exists)
                     {
-                        string raw = null;
-                        bool exists = target != null && target.TryGetValue(key, out raw);
-                        bool fallback = !exists;
-                        string original = raw;
-                        if (!exists)
-                        {
-                            string fallbackText = english != null && english.TryGetValue(key, out var value) ? value : key;
-                            original = Baseline(new TextId(mod.Manifest.ID, "en", "Localization", key), fallbackText);
-                        }
+                        string fallbackText = english != null && english.TryGetValue(key, out var value) ? value : key;
+                        originalText = Baseline(new TextId(mod.Manifest.ID, "en", "Localization", key), fallbackText);
+                    }
+
+                    bindings.TryGetValue(id, out var existing);
+                    ModTarget modTarget = GetModTarget(mod, targetCode, target, key, raw, exists, originalText, existing);
+                    Binding binding;
+                    if (existing == null || !ReferenceEquals(existing.Mod, mod) || !ReferenceEquals(existing.ModTarget, modTarget))
+                    {
                         var entry = new TextEntry(id, mod.Manifest.Name ?? mod.Manifest.ID, mod.Manifest.ModVersion ?? "",
-                            "Localization", key, "mod-localization", original ?? "", fallback, false, string.Empty);
-                        binding = new Binding(entry, mod, targetCode, raw, exists);
+                            "Localization", key, "mod-localization", modTarget.OriginalText, !modTarget.Existed, false, string.Empty);
+                        binding = new Binding(entry, modTarget);
+                        existing?.ModTarget?.Bindings.Remove(existing);
+                        modTarget.Bindings.Add(binding);
                         bindings[id] = binding;
                     }
+                    else binding = existing;
                     result.Add(binding.Entry);
                 }
             }
@@ -180,10 +192,10 @@ namespace ProbablyEdited
 
         public int Apply(IReadOnlyDictionary<TextId, string> overrides)
         {
-            int applied = 0;
+            int applied = ValidateModOverrides(overrides);
             foreach (var binding in bindings.Values)
             {
-                if (binding.Mod != null && !IsActive(binding.Mod)) continue;
+                if (binding.Mod != null) continue;
                 if (overrides.TryGetValue(binding.Entry.Id, out string text))
                 {
                     binding.Apply(text);
@@ -191,6 +203,27 @@ namespace ProbablyEdited
                 }
                 else binding.Restore();
             }
+
+            foreach (ModTarget target in modTargets)
+            {
+                bool active = false;
+                bool hasOverride = false;
+                string text = null;
+                foreach (Binding binding in target.Bindings)
+                {
+                    if (!IsActive(binding.Mod)) continue;
+                    active = true;
+                    if (overrides.TryGetValue(binding.Entry.Id, out text))
+                    {
+                        hasOverride = true;
+                        break;
+                    }
+                }
+                if (!active) continue;
+                if (hasOverride) target.Apply(text);
+                else target.Restore();
+            }
+            CleanupCreatedModLocales();
             return applied;
         }
 
@@ -206,11 +239,18 @@ namespace ProbablyEdited
 
         public void Dispose()
         {
-            foreach (var binding in bindings.Values) binding.Restore();
+            foreach (var binding in bindings.Values)
+                if (binding.Mod == null) binding.Restore();
+            foreach (ModTarget target in modTargets) target.Restore();
+            CleanupCreatedModLocales();
             foreach (var operation in operations)
                 if (operation.IsValid()) Addressables.Release(operation);
             operations.Clear();
             bindings.Clear();
+            modTargets.Clear();
+            modTargetsByDictionaryEntry.Clear();
+            modLocaleStatesByLocale.Clear();
+            modLocaleStates.Clear();
         }
 
         private StringTable FindEnglishTable(string tableId)
@@ -231,6 +271,77 @@ namespace ProbablyEdited
             foreach (string candidate in mod.Localization.Keys)
                 if (Canonical(candidate) == code) return candidate;
             return null;
+        }
+        private ModTarget GetModTarget(
+            LoadedMod mod,
+            string locale,
+            Dictionary<string, string> dictionary,
+            string key,
+            string original,
+            bool existed,
+            string originalText,
+            Binding existing)
+        {
+            if (existing != null && ReferenceEquals(existing.Mod, mod)
+                && existing.ModTarget != null && existing.ModTarget.Matches(dictionary, locale, key))
+                return existing.ModTarget;
+
+            if (dictionary != null)
+            {
+                var identity = new ModDictionaryEntryKey(dictionary, key);
+                if (modTargetsByDictionaryEntry.TryGetValue(identity, out var sharedTarget))
+                    return sharedTarget;
+            }
+
+            ModLocaleState localeState = dictionary == null ? GetOrCreateModLocaleState(mod, locale) : null;
+            var target = new ModTarget(mod, locale, dictionary, key, original, existed, originalText, localeState);
+            modTargets.Add(target);
+            if (dictionary != null)
+                modTargetsByDictionaryEntry.Add(new ModDictionaryEntryKey(dictionary, key), target);
+            return target;
+        }
+
+        private ModLocaleState GetOrCreateModLocaleState(LoadedMod mod, string locale)
+        {
+            var identity = new ModLocaleKey(mod, locale);
+            if (modLocaleStatesByLocale.TryGetValue(identity, out var state))
+                return state;
+
+            state = new ModLocaleState(mod, locale);
+            modLocaleStatesByLocale.Add(identity, state);
+            modLocaleStates.Add(state);
+            return state;
+        }
+
+        private int ValidateModOverrides(IReadOnlyDictionary<TextId, string> overrides)
+        {
+            int applied = 0;
+            foreach (ModTarget target in modTargets)
+            {
+                bool found = false;
+                string firstText = null;
+                foreach (Binding binding in target.Bindings)
+                {
+                    if (!IsActive(binding.Mod) || !overrides.TryGetValue(binding.Entry.Id, out string text)) continue;
+                    if (found && !StringComparer.Ordinal.Equals(firstText, text))
+                        throw new InvalidOperationException(UiText.Format("catalog.error.localization_alias_conflict", target.Key));
+                    found = true;
+                    firstText = text;
+                    applied++;
+                }
+            }
+            return applied;
+        }
+
+        private void CleanupCreatedModLocales()
+        {
+            foreach (ModLocaleState state in modLocaleStates)
+            {
+                if (!state.CreatedByCatalog || state.AppliedTargets != 0) continue;
+                if (state.Mod.Localization.TryGetValue(state.Locale, out var dictionary) && dictionary.Count == 0)
+                    state.Mod.Localization.Remove(state.Locale);
+                state.CreatedByCatalog = false;
+            }
         }
 
         private static string Category(string table)
@@ -256,19 +367,147 @@ namespace ProbablyEdited
         }
 
 
+        private readonly struct ModDictionaryEntryKey : IEquatable<ModDictionaryEntryKey>
+        {
+            private readonly Dictionary<string, string> dictionary;
+            private readonly string key;
+
+            public ModDictionaryEntryKey(Dictionary<string, string> dictionary, string key)
+            {
+                this.dictionary = dictionary;
+                this.key = key;
+            }
+
+            public bool Equals(ModDictionaryEntryKey other) =>
+                ReferenceEquals(dictionary, other.dictionary) && StringComparer.Ordinal.Equals(key, other.key);
+
+            public override bool Equals(object obj) => obj is ModDictionaryEntryKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked { return RuntimeHelpers.GetHashCode(dictionary) * 397 ^ StringComparer.Ordinal.GetHashCode(key); }
+            }
+        }
+
+        private readonly struct ModLocaleKey : IEquatable<ModLocaleKey>
+        {
+            private readonly LoadedMod mod;
+            private readonly string locale;
+
+            public ModLocaleKey(LoadedMod mod, string locale)
+            {
+                this.mod = mod;
+                this.locale = locale;
+            }
+
+            public bool Equals(ModLocaleKey other) =>
+                ReferenceEquals(mod, other.mod) && StringComparer.Ordinal.Equals(locale, other.locale);
+
+            public override bool Equals(object obj) => obj is ModLocaleKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked { return RuntimeHelpers.GetHashCode(mod) * 397 ^ StringComparer.Ordinal.GetHashCode(locale); }
+            }
+        }
+
+        private sealed class ModLocaleState
+        {
+            public readonly LoadedMod Mod;
+            public readonly string Locale;
+            public bool CreatedByCatalog;
+            public int AppliedTargets;
+
+            public ModLocaleState(LoadedMod mod, string locale)
+            {
+                Mod = mod;
+                Locale = locale;
+            }
+        }
+
+        private sealed class ModTarget
+        {
+            public readonly LoadedMod Mod;
+            public readonly string Locale;
+            public readonly Dictionary<string, string> TargetDictionary;
+            public readonly string Key;
+            public readonly string Original;
+            public readonly bool Existed;
+            public readonly string OriginalText;
+            public readonly ModLocaleState LocaleState;
+            public readonly List<Binding> Bindings = new List<Binding>();
+            private bool applied;
+
+            public ModTarget(
+                LoadedMod mod,
+                string locale,
+                Dictionary<string, string> dictionary,
+                string key,
+                string original,
+                bool existed,
+                string originalText,
+                ModLocaleState localeState)
+            {
+                Mod = mod;
+                Locale = locale;
+                TargetDictionary = dictionary;
+                Key = key;
+                Original = original;
+                Existed = existed;
+                OriginalText = originalText ?? string.Empty;
+                LocaleState = localeState;
+            }
+
+            public bool Matches(Dictionary<string, string> dictionary, string locale, string key) =>
+                StringComparer.Ordinal.Equals(Key, key)
+                && (TargetDictionary == null
+                    ? StringComparer.Ordinal.Equals(Locale, locale)
+                    : ReferenceEquals(TargetDictionary, dictionary));
+
+            public void Apply(string text)
+            {
+                Dictionary<string, string> dictionary = TargetDictionary;
+                if (dictionary == null)
+                {
+                    if (!Mod.Localization.TryGetValue(Locale, out dictionary))
+                    {
+                        dictionary = new Dictionary<string, string>(StringComparer.Ordinal);
+                        Mod.Localization[Locale] = dictionary;
+                        LocaleState.CreatedByCatalog = true;
+                    }
+                }
+                dictionary[Key] = text;
+                if (!applied && LocaleState != null) LocaleState.AppliedTargets++;
+                applied = true;
+            }
+
+            public void Restore()
+            {
+                if (!applied) return;
+                Dictionary<string, string> dictionary = TargetDictionary;
+                if (dictionary == null) Mod.Localization.TryGetValue(Locale, out dictionary);
+                if (dictionary != null)
+                {
+                    if (Existed) dictionary[Key] = Original;
+                    else dictionary.Remove(Key);
+                }
+                if (LocaleState != null) LocaleState.AppliedTargets--;
+                applied = false;
+            }
+        }
+
         private sealed class Binding
         {
             public readonly TextEntry Entry;
-            public readonly LoadedMod Mod;
+            public LoadedMod Mod => ModTarget?.Mod;
+            public readonly ModTarget ModTarget;
             private readonly StringTable table;
             private readonly long keyId;
-            private readonly string locale;
             private readonly string original;
             private readonly bool existed;
             private readonly bool smart;
             private readonly bool originalSmart;
             private bool applied;
-            private bool createdLocale;
 
             public Binding(TextEntry entry, StringTable table, long keyId, string original, bool existed, bool originalSmart, bool smart)
             {
@@ -281,59 +520,33 @@ namespace ProbablyEdited
                 this.originalSmart = originalSmart;
             }
 
-            public Binding(TextEntry entry, LoadedMod mod, string locale, string original, bool existed)
+            public Binding(TextEntry entry, ModTarget modTarget)
             {
                 Entry = entry;
-                Mod = mod;
-                this.locale = locale;
-                this.original = original;
-                this.existed = existed;
+                ModTarget = modTarget;
             }
 
             public void Apply(string text)
             {
-                if (Mod == null)
-                {
-                    if (table == null) throw new InvalidOperationException(UiText.Get("catalog.error.table_unloaded"));
-                    var value = table.GetEntry(keyId) ?? table.AddEntry(keyId, text);
-                    value.Value = text;
-                    value.IsSmart = smart;
-                }
-                else
-                {
-                    if (!Mod.Localization.TryGetValue(locale, out var dictionary))
-                    {
-                        dictionary = new Dictionary<string, string>(StringComparer.Ordinal);
-                        Mod.Localization[locale] = dictionary;
-                        createdLocale = true;
-                    }
-                    dictionary[Entry.Id.Key] = text;
-                }
+                if (table == null) throw new InvalidOperationException(UiText.Get("catalog.error.table_unloaded"));
+                var value = table.GetEntry(keyId) ?? table.AddEntry(keyId, text);
+                value.Value = text;
+                value.IsSmart = smart;
                 applied = true;
             }
 
             public void Restore()
             {
                 if (!applied) return;
-                if (Mod == null && table == null) { applied = false; return; }
-                if (table != null)
+                if (table == null) { applied = false; return; }
+                if (existed)
                 {
-                    if (existed)
-                    {
-                        var value = table.GetEntry(keyId) ?? table.AddEntry(keyId, original);
-                        value.Value = original;
-                        value.IsSmart = originalSmart;
-                    }
-                    else table.RemoveEntry(keyId);
+                    var value = table.GetEntry(keyId) ?? table.AddEntry(keyId, original);
+                    value.Value = original;
+                    value.IsSmart = originalSmart;
                 }
-                else if (Mod.Localization.TryGetValue(locale, out var dictionary))
-                {
-                    if (existed) dictionary[Entry.Id.Key] = original;
-                    else dictionary.Remove(Entry.Id.Key);
-                    if (createdLocale && dictionary.Count == 0) Mod.Localization.Remove(locale);
-                }
+                else table.RemoveEntry(keyId);
                 applied = false;
-                createdLocale = false;
             }
         }
     }

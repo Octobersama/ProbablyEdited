@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"Nie udało się odczytać natywnego selekto
 catalog.error.load_locale,"Nie udało się odczytać tabel tekstów dla języka {0}: {1}"
 catalog.error.load_english,"Nie udało się odczytać zapasowych angielskich tabel tekstów: {0}"
 catalog.error.table_unloaded,"Tabela tekstów została wyładowana. Uruchom grę ponownie przed zastosowaniem zmian."
+catalog.error.localization_alias_conflict,"Ten preset przypisuje różne teksty do tego samego wpisu moda przez aliasy językowe: {0}"
 catalog.detail.game_base,"Tabela tekstów: {0}\nKlucz: {1}\nKlucz numeryczny: {2}\n{3}"
 catalog.detail.game_fallback,"Ten język nie ma tłumaczenia; wyświetlany jest tekst angielski lub klucz. Przywrócenie oryginału przywraca tekst zapasowy gry."
 catalog.detail.game_smart,"Inteligentny ciąg: zachowuje zmienne, warunki i strukturę formatu liczby mnogiej."

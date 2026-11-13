@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"無法讀取遊戲原生語言選擇器。�
 catalog.error.load_locale,"無法讀取語言 {0} 的文字資料表：{1}"
 catalog.error.load_english,"無法讀取英文備援文字資料表：{0}"
 catalog.error.table_unloaded,"文字資料表已卸載。請重新啟動遊戲後再套用變更。"
+catalog.error.localization_alias_conflict,"此預設透過語言別名為同一模組項目指定了不同文字：{0}"
 catalog.detail.game_base,"字串表：{0}\n索引鍵：{1}\n數值索引鍵：{2}\n{3}"
 catalog.detail.game_fallback,"此語言沒有翻譯；目前顯示英文文字或索引鍵。還原原文會還原遊戲的備援文字。"
 catalog.detail.game_smart,"Smart String：保留變數、條件與複數格式結構。"

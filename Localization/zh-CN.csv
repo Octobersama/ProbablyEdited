@@ -280,6 +280,7 @@ catalog.error.native_locale_choices,"无法读取游戏原生语言选择器，�
 catalog.error.load_locale,"无法读取语言 {0} 的文本表：{1}"
 catalog.error.load_english,"无法读取英语回退文本表：{0}"
 catalog.error.table_unloaded,"文本表已被卸载，请重新启动游戏后再应用修改。"
+catalog.error.localization_alias_conflict,"此预设通过语言别名为同一模组条目指定了不同文本：{0}"
 catalog.detail.game_base,"字符串表：{0}\n键：{1}\n数值键：{2}\n{3}"
 catalog.detail.game_fallback,"本语言无翻译，参考显示英语或键名；恢复原文会恢复游戏原有回退。"
 catalog.detail.game_smart,"Smart String：保留变量、条件与复数格式结构。"
