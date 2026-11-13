@@ -4,6 +4,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
     <AssemblyName>ProbablyEdited</AssemblyName>
     <RootNamespace>ProbablyEdited</RootNamespace>
     <Version>1.0.0</Version>
