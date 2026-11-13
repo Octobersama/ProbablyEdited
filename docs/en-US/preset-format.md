@@ -23,7 +23,7 @@ JSON member names are case-sensitive. Member order is not significant, but each 
 | --- | --- | --- | --- |
 | `schema` | string | Yes | Must be exactly `probably-edited`. |
 | `schemaVersion` | integer | Yes | Must be `2` or `1`. Other versions are unsupported. |
-| `gameVersion` | string | Yes | The `PlayerStore.VERSION` value used by `GameTextCatalog` for the game's localization-content revision at export time. It is not the mod manifest's `<GameVersions>` compatibility list or `<ModVersion>` (`1.0.0`). The parser accepts any string, including an empty one. Import warns on a mismatch rather than blocking; if the current value is unavailable, preview warns that it cannot check. |
+| `gameVersion` | string | Yes | The `PlayerStore.VERSION` value used by `GameTextCatalog` for the game's localization-content revision at export time. It is not the mod manifest's `<GameVersions>` compatibility list or `<ModVersion>`. The parser accepts any string, including an empty one. Import warns on a mismatch rather than blocking; if the current value is unavailable, preview warns that it cannot check. |
 | `presetName` | string | Version 2 only | Exported preset's name. Must not be empty or whitespace-only. When imported as a new preset, surrounding whitespace is trimmed. An existing target preset keeps its own name. |
 | `overrides` | array | Yes | May be empty. Each element is one replacement, with the five required string fields below. |
 

@@ -29,6 +29,11 @@ namespace UnityEngine.Localization.Settings
     public static class LocalizationSettings
     {
         public static event Action<Locale> SelectedLocaleChanged;
+
+        public static void SelectLocale(string code)
+        {
+            SelectedLocaleChanged?.Invoke(new Locale { Identifier = new LocaleIdentifier { Code = code } });
+        }
     }
 }
 

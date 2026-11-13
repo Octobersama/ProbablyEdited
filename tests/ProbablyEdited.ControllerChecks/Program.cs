@@ -4,6 +4,7 @@ using System.IO;
 using ProbablyEdited;
 using System.Linq;
 using Newtonsoft.Json.Linq;
+using UnityEngine.Localization.Settings;
 
 internal static class Program
 {
@@ -12,6 +13,7 @@ internal static class Program
         TestLocalization.Initialize();
         int failures = 0;
         Run("fresh workspaces save and apply a stable preset ID", FreshWorkspaceCanSave, ref failures);
+        Run("game language changes leave the editing locale and drafts intact", GameLanguageLeavesEditingLocaleIntact, ref failures);
         Run("rename-only changes save and reload without override edits", RenameOnlyChangesSaveAndReload, ref failures);
         Run("legacy active data migrates with all languages intact", MigratesLegacyActive, ref failures);
         Run("corrupt workspace never falls back to legacy active data", CorruptWorkspaceIsProtected, ref failures);
@@ -22,8 +24,41 @@ internal static class Program
         Run("failed first workspace write removes its partial file", FailedFirstWorkspaceWrite, ref failures);
         Run("runtime rollback still runs when disk rollback fails", RuntimeRollbackSurvivesDiskRollbackFailure, ref failures);
 
-        Console.WriteLine(failures == 0 ? "All 10 controller checks passed." : $"{failures} controller check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All controller checks passed." : $"{failures} controller check(s) failed.");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void GameLanguageLeavesEditingLocaleIntact()
+    {
+        string root = NewStore();
+        TextEntry english = Entry("game", "en", "greeting", "Hello");
+        TextEntry french = Entry("game", "fr", "greeting", "Bonjour");
+        TextEntry korean = Entry("game", "ko", "greeting", "안녕하세요");
+        try
+        {
+            using (EditorController controller = Open(root, english, french, korean))
+            {
+                Equal("en", controller.SelectedLocale, "Initial editing language did not follow the game.");
+                controller.LoadLocale("fr");
+                controller.State.Stage(french, "Bonjour modifié");
+
+                LocalizationSettings.SelectLocale("en");
+                Equal("fr", controller.SelectedLocale, "A game language change selected a loaded editing locale.");
+                LocalizationSettings.SelectLocale("ko");
+                Equal("fr", controller.SelectedLocale, "A game language change selected an unloaded editing locale.");
+                Equal("Bonjour modifié", controller.State.GetText(french), "A game language change discarded the editing draft.");
+
+                controller.LoadLocale("en");
+                Equal("en", controller.SelectedLocale, "Explicit editing language selection stopped working.");
+                Equal("Hello", controller.State.GetText(english), "The French draft leaked into the English entry.");
+                controller.LoadLocale("fr");
+                Equal("Bonjour modifié", controller.State.GetText(french), "Explicit language switching lost the draft.");
+            }
+        }
+        finally
+        {
+            RemoveStore(root);
+        }
     }
 
     private static void FreshWorkspaceCanSave()

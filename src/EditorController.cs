@@ -3,8 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
-using UnityEngine.Localization;
-using UnityEngine.Localization.Settings;
 
 namespace ProbablyEdited
 {
@@ -91,7 +89,6 @@ namespace ProbablyEdited
             }
 
             ModHook.OnModAssetsLoaded += AssetsLoaded;
-            LocalizationSettings.SelectedLocaleChanged += LocaleChanged;
             IsLoading = true;
             ModHelper.StartCoroutine(ModEntry.ModId, Guard(InitializeRoutine()));
         }
@@ -639,13 +636,6 @@ namespace ProbablyEdited
             StartPending();
         }
 
-        private void LocaleChanged(Locale locale)
-        {
-            if (!initialized || disposed)
-                return;
-            LoadLocale(GameTextCatalog.Canonical(locale.Identifier.Code));
-        }
-
         private void SetStatus(string key, EditorStatusKind kind, params object[] arguments)
         {
             statusKey = key;
@@ -673,7 +663,6 @@ namespace ProbablyEdited
         {
             disposed = true;
             ModHook.OnModAssetsLoaded -= AssetsLoaded;
-            LocalizationSettings.SelectedLocaleChanged -= LocaleChanged;
             ModHelper.StopAllCoroutines(ModEntry.ModId);
             catalog.Dispose();
         }

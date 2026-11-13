@@ -35,8 +35,13 @@ internal static class Program
         Run("history supports repeated undo and redo", TextHistoryRestoresSnapshots, ref failures);
         Run("history shortcuts use platform command conventions", TextHistoryShortcutCommands, ref failures);
         Run("history shortcuts respect IME and ordinary characters", TextHistoryShortcutCharacterBoundaries, ref failures);
+        Run("input transactions merge multiple notifications into one undo and redo", TextInputTransactionsMergeNotifications, ref failures);
+        Run("nested input transactions commit at the outer boundary", TextInputTransactionsCommitAtOutermostScope, ref failures);
+        Run("empty input transactions update selection without an undo step", TextInputTransactionsIgnoreNoOpEdits, ref failures);
+        Run("expired scopes and delayed IME edits cannot cross targets", TextInputTransactionsIsolateTargets, ref failures);
+        Run("selection replacement remains separate from adjacent typing", TextInputTransactionsKeepSelectionReplacementSeparate, ref failures);
 
-        Console.WriteLine(failures == 0 ? "All 25 Core checks passed." : $"{failures} Core check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All 30 Core checks passed." : $"{failures} Core check(s) failed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -362,6 +367,110 @@ internal static class Program
         Ensure(history.TryUndo(out undone), "The commit could not be undone after replay.");
         Ensure(history.TryUndo(out undone), "Typing before the commit had no undo step.");
         Equal("p", undone.Text, "Undo did not restore text before typing preceding the commit.");
+    }
+
+    private static void TextInputTransactionsMergeNotifications()
+    {
+        var clock = new HistoryClock();
+        var transaction = new TextInputEditTransaction(() => clock.Now);
+        transaction.Reset("before", 6, 6);
+
+        using (transaction.BeginAtomicEdit())
+        {
+            transaction.RecordAtomic("intermediate", 5, 5);
+            transaction.RecordAtomic("before after", 11, 11);
+            Ensure(!transaction.CanUndo, "Text notifications committed before the atomic scope ended.");
+        }
+
+        Ensure(transaction.TryUndo(out TextEditSnapshot undone), "A multi-notification atomic edit had no undo step.");
+        Equal("before", undone.Text, "One undo did not remove the complete atomic edit.");
+        Equal(6, undone.AnchorPosition, "Undo lost the original anchor.");
+        Equal(6, undone.FocusPosition, "Undo lost the original caret.");
+        Ensure(!transaction.CanUndo, "Multiple notifications created more than one undo step.");
+        Ensure(transaction.TryRedo(out TextEditSnapshot redone), "The atomic edit could not be redone.");
+        Equal("before after", redone.Text, "Redo did not restore the final text notification.");
+        Equal(11, redone.AnchorPosition, "Redo lost the final selection anchor.");
+        Equal(11, redone.FocusPosition, "Redo lost the final caret.");
+    }
+
+    private static void TextInputTransactionsCommitAtOutermostScope()
+    {
+        var transaction = new TextInputEditTransaction(() => 0d);
+        transaction.Reset("start", 5, 5);
+        using (transaction.BeginAtomicEdit())
+        {
+            transaction.RecordAtomic("start one", 9, 9);
+            using (transaction.BeginAtomicEdit())
+            {
+                transaction.RecordAtomic("start two", 9, 9);
+                Ensure(!transaction.CanUndo, "The nested transaction committed before either scope ended.");
+            }
+
+            Ensure(!transaction.CanUndo, "Disposing the nested scope committed before the outer scope ended.");
+            transaction.RecordAtomic("start complete", 14, 14);
+        }
+
+        Ensure(transaction.TryUndo(out TextEditSnapshot undone), "The nested transaction had no undo step.");
+        Equal("start", undone.Text, "Nested notifications were not committed as one atomic edit.");
+        Ensure(!transaction.CanUndo, "Nested transactions created multiple undo steps.");
+        Ensure(transaction.TryRedo(out TextEditSnapshot redone), "The nested transaction could not be redone.");
+        Equal("start complete", redone.Text, "Redo did not restore the final outer-scope text.");
+    }
+
+    private static void TextInputTransactionsIgnoreNoOpEdits()
+    {
+        var transaction = new TextInputEditTransaction(() => 0d);
+        transaction.Reset("unchanged", 9, 9);
+        using (transaction.BeginAtomicEdit())
+        {
+            transaction.RecordAtomic("temporary", 4, 4);
+            transaction.RecordAtomic("unchanged", 2, 7);
+            Ensure(!transaction.CanUndo, "Notifications created an undo step before the atomic scope ended.");
+        }
+
+        Ensure(!transaction.CanUndo, "A net-zero atomic transaction created an undo step.");
+        Equal("unchanged", transaction.Current.Text, "A no-op transaction changed the text.");
+        Equal(2, transaction.Current.AnchorPosition, "A no-op transaction did not retain the selection anchor.");
+        Equal(7, transaction.Current.FocusPosition, "A no-op transaction did not retain the selection focus.");
+    }
+
+    private static void TextInputTransactionsKeepSelectionReplacementSeparate()
+    {
+        var transaction = new TextInputEditTransaction(() => 0d);
+        transaction.Reset("abcd", 4, 4);
+        transaction.Record("abcde", 5, 5);
+        transaction.RecordAtomic("abXde", 3, 3);
+        transaction.Record("abX!de", 4, 4);
+
+        Ensure(transaction.TryUndo(out TextEditSnapshot undone), "Typing after a selection replacement had no undo step.");
+        Equal("abXde", undone.Text, "Typing after a selection replacement merged with the replacement.");
+        Ensure(transaction.TryUndo(out undone), "The selection replacement had no independent undo step.");
+        Equal("abcde", undone.Text, "Undo did not restore text before the selection replacement.");
+        Equal(5, undone.FocusPosition, "Undo lost the cursor before the selection replacement.");
+        Ensure(transaction.TryUndo(out undone), "Typing before the selection replacement had no undo step.");
+        Equal("abcd", undone.Text, "Undo did not restore text before typing preceding the replacement.");
+    }
+
+    private static void TextInputTransactionsIsolateTargets()
+    {
+        var transaction = new TextInputEditTransaction(() => 0d);
+        transaction.Reset("first target", 12, 12);
+        long firstTargetVersion = transaction.TargetVersion;
+        TextInputEditTransaction.Scope expiredScope = transaction.BeginAtomicEdit();
+        transaction.RecordAtomic("old target edit", 15, 15);
+        Ensure(transaction.QueueAtomicEdit(firstTargetVersion, "delayed IME", 10, 10, 4), "The pending IME edit was not queued.");
+
+        transaction.Reset("second target", 13, 13);
+        Ensure(!expiredScope.RecordAtomic("stale scope edit", 16, 16), "An expired scope wrote into the new target.");
+        Ensure(!transaction.FinalizePendingAtomicEdit(), "A delayed IME edit survived the target reset.");
+        Ensure(!transaction.QueueAtomicEdit(firstTargetVersion, "late IME", 10, 10, 5), "A delayed IME callback was accepted for a new target.");
+        Ensure(!transaction.RecordAtomic("late old-target notification", 15, 15), "A stale input notification crossed into the new target.");
+        Equal("second target", transaction.Current.Text, "An expired edit changed the new target's history.");
+
+        expiredScope.Dispose();
+        Ensure(transaction.RecordAtomic("second target edit", 18, 18), "The new target stayed blocked after the expired scope ended.");
+        Ensure(transaction.TryUndo(out TextEditSnapshot undone), "The new target's edit had no undo step.");
+        Equal("second target", undone.Text, "Undo restored text from an expired target scope.");
     }
 
     private static void RoundTripsReplacementText()

@@ -430,7 +430,6 @@ namespace ProbablyEdited
             builder.End();
 
             _renamePresetWindow = builder.Show();
-            NativeFontSupport.Apply(_renamePresetWindow);
         }
 
         private void OnPresetRenameInputChanged(string value)
@@ -457,7 +456,6 @@ namespace ProbablyEdited
             catch (Exception exception)
             {
                 _renamePresetErrorLabel?.SetText(exception.Message);
-                NativeFontSupport.Apply(_renamePresetErrorLabel);
             }
         }
 
@@ -513,7 +511,6 @@ namespace ProbablyEdited
             builder.End();
 
             _deletePresetWindow = builder.Show();
-            NativeFontSupport.Apply(_deletePresetWindow);
         }
 
         private void ConfirmPresetDeletion()
@@ -558,7 +555,6 @@ namespace ProbablyEdited
             catch (Exception exception)
             {
                 _deletePresetErrorLabel?.SetText(exception.Message);
-                NativeFontSupport.Apply(_deletePresetErrorLabel);
             }
         }
 

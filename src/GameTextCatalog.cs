@@ -149,7 +149,11 @@ namespace ProbablyEdited
                         var entry = new TextEntry(id, mod.Manifest.Name ?? mod.Manifest.ID, mod.Manifest.ModVersion ?? "",
                             "Localization", key, "mod-localization", modTarget.OriginalText, !modTarget.Existed, false, string.Empty);
                         binding = new Binding(entry, modTarget);
-                        existing?.ModTarget?.Bindings.Remove(existing);
+                        ModTarget previousTarget = existing?.ModTarget;
+                        previousTarget?.Bindings.Remove(existing);
+                        if (previousTarget != null && !ReferenceEquals(previousTarget, modTarget)
+                            && previousTarget.Bindings.Count == 0)
+                            previousTarget.Restore();
                         modTarget.Bindings.Add(binding);
                         bindings[id] = binding;
                     }
@@ -192,6 +196,8 @@ namespace ProbablyEdited
 
         public int Apply(IReadOnlyDictionary<TextId, string> overrides)
         {
+            // Resolve late registrations before alias validation; missing locales remain uncreated.
+            BindUnboundModTargets();
             int applied = ValidateModOverrides(overrides);
             foreach (var binding in bindings.Values)
             {
@@ -220,7 +226,7 @@ namespace ProbablyEdited
                     }
                 }
                 if (!active) continue;
-                if (hasOverride) target.Apply(text);
+                if (hasOverride) ApplyModTarget(target, text);
                 else target.Restore();
             }
             CleanupCreatedModLocales();
@@ -293,12 +299,74 @@ namespace ProbablyEdited
                     return sharedTarget;
             }
 
-            ModLocaleState localeState = dictionary == null ? GetOrCreateModLocaleState(mod, locale) : null;
-            var target = new ModTarget(mod, locale, dictionary, key, original, existed, originalText, localeState);
+            var target = new ModTarget(mod, locale, dictionary, key, original, existed, originalText);
             modTargets.Add(target);
             if (dictionary != null)
                 modTargetsByDictionaryEntry.Add(new ModDictionaryEntryKey(dictionary, key), target);
             return target;
+        }
+
+        private void ApplyModTarget(ModTarget target, string text)
+        {
+            var localeKey = new ModLocaleKey(target.Mod, target.Locale);
+            modLocaleStatesByLocale.TryGetValue(localeKey, out ModLocaleState localeState);
+
+            Dictionary<string, string> dictionary = target.TargetDictionary;
+            bool addToDictionaryIndex = dictionary == null;
+            if (addToDictionaryIndex)
+            {
+                if (!target.Mod.Localization.TryGetValue(target.Locale, out dictionary))
+                {
+                    dictionary = new Dictionary<string, string>(StringComparer.Ordinal);
+                    target.Mod.Localization[target.Locale] = dictionary;
+                    if (localeState == null)
+                        localeState = GetOrCreateModLocaleState(target.Mod, target.Locale);
+                    localeState.CreatedDictionary = dictionary;
+                }
+                target.BindDictionary(dictionary);
+            }
+            else if (!target.Mod.Localization.TryGetValue(target.Locale, out _)
+                && localeState != null && ReferenceEquals(localeState.CreatedDictionary, dictionary))
+            {
+                target.Mod.Localization[target.Locale] = dictionary;
+            }
+
+            if (localeState != null && ReferenceEquals(localeState.CreatedDictionary, dictionary))
+                target.LocaleState = localeState;
+
+            target.Apply(text);
+            if (addToDictionaryIndex)
+                modTargetsByDictionaryEntry.Add(new ModDictionaryEntryKey(dictionary, target.Key), target);
+        }
+
+        private void BindUnboundModTargets()
+        {
+            for (int i = 0; i < modTargets.Count; i++)
+            {
+                ModTarget target = modTargets[i];
+                if (target.TargetDictionary != null
+                    || !target.Mod.Localization.TryGetValue(target.Locale, out var dictionary)
+                    || dictionary == null) continue;
+
+                var identity = new ModDictionaryEntryKey(dictionary, target.Key);
+                if (modTargetsByDictionaryEntry.TryGetValue(identity, out var sharedTarget))
+                {
+                    foreach (Binding binding in target.Bindings)
+                    {
+                        binding.ModTarget = sharedTarget;
+                        sharedTarget.Bindings.Add(binding);
+                    }
+                    target.Bindings.Clear();
+                    modTargets.RemoveAt(i--);
+                    continue;
+                }
+
+                target.BindDictionary(dictionary);
+                modTargetsByDictionaryEntry.Add(identity, target);
+                if (modLocaleStatesByLocale.TryGetValue(new ModLocaleKey(target.Mod, target.Locale), out var localeState)
+                    && ReferenceEquals(localeState.CreatedDictionary, dictionary))
+                    target.LocaleState = localeState;
+            }
         }
 
         private ModLocaleState GetOrCreateModLocaleState(LoadedMod mod, string locale)
@@ -337,10 +405,11 @@ namespace ProbablyEdited
         {
             foreach (ModLocaleState state in modLocaleStates)
             {
-                if (!state.CreatedByCatalog || state.AppliedTargets != 0) continue;
-                if (state.Mod.Localization.TryGetValue(state.Locale, out var dictionary) && dictionary.Count == 0)
-                    state.Mod.Localization.Remove(state.Locale);
-                state.CreatedByCatalog = false;
+                if (state.CreatedDictionary == null || state.AppliedTargets != 0
+                    || !state.Mod.Localization.TryGetValue(state.Locale, out var dictionary)
+                    || !ReferenceEquals(dictionary, state.CreatedDictionary)
+                    || dictionary.Count != 0) continue;
+                state.Mod.Localization.Remove(state.Locale);
             }
         }
 
@@ -415,7 +484,7 @@ namespace ProbablyEdited
         {
             public readonly LoadedMod Mod;
             public readonly string Locale;
-            public bool CreatedByCatalog;
+            public Dictionary<string, string> CreatedDictionary;
             public int AppliedTargets;
 
             public ModLocaleState(LoadedMod mod, string locale)
@@ -429,12 +498,12 @@ namespace ProbablyEdited
         {
             public readonly LoadedMod Mod;
             public readonly string Locale;
-            public readonly Dictionary<string, string> TargetDictionary;
+            public Dictionary<string, string> TargetDictionary { get; private set; }
             public readonly string Key;
-            public readonly string Original;
-            public readonly bool Existed;
+            public string Original { get; private set; }
+            public bool Existed { get; private set; }
             public readonly string OriginalText;
-            public readonly ModLocaleState LocaleState;
+            public ModLocaleState LocaleState { get; set; }
             public readonly List<Binding> Bindings = new List<Binding>();
             private bool applied;
 
@@ -445,8 +514,7 @@ namespace ProbablyEdited
                 string key,
                 string original,
                 bool existed,
-                string originalText,
-                ModLocaleState localeState)
+                string originalText)
             {
                 Mod = mod;
                 Locale = locale;
@@ -455,28 +523,25 @@ namespace ProbablyEdited
                 Original = original;
                 Existed = existed;
                 OriginalText = originalText ?? string.Empty;
-                LocaleState = localeState;
             }
 
-            public bool Matches(Dictionary<string, string> dictionary, string locale, string key) =>
-                StringComparer.Ordinal.Equals(Key, key)
-                && (TargetDictionary == null
-                    ? StringComparer.Ordinal.Equals(Locale, locale)
-                    : ReferenceEquals(TargetDictionary, dictionary));
+            public void BindDictionary(Dictionary<string, string> dictionary)
+            {
+                TargetDictionary = dictionary;
+                Existed = dictionary.TryGetValue(Key, out string original);
+                Original = original;
+            }
+
+            public bool Matches(Dictionary<string, string> dictionary, string locale, string key)
+            {
+                if (!StringComparer.Ordinal.Equals(Key, key)) return false;
+                if (TargetDictionary != null) return ReferenceEquals(TargetDictionary, dictionary);
+                return dictionary == null && StringComparer.Ordinal.Equals(Locale, locale);
+            }
 
             public void Apply(string text)
             {
-                Dictionary<string, string> dictionary = TargetDictionary;
-                if (dictionary == null)
-                {
-                    if (!Mod.Localization.TryGetValue(Locale, out dictionary))
-                    {
-                        dictionary = new Dictionary<string, string>(StringComparer.Ordinal);
-                        Mod.Localization[Locale] = dictionary;
-                        LocaleState.CreatedByCatalog = true;
-                    }
-                }
-                dictionary[Key] = text;
+                TargetDictionary[Key] = text;
                 if (!applied && LocaleState != null) LocaleState.AppliedTargets++;
                 applied = true;
             }
@@ -484,13 +549,8 @@ namespace ProbablyEdited
             public void Restore()
             {
                 if (!applied) return;
-                Dictionary<string, string> dictionary = TargetDictionary;
-                if (dictionary == null) Mod.Localization.TryGetValue(Locale, out dictionary);
-                if (dictionary != null)
-                {
-                    if (Existed) dictionary[Key] = Original;
-                    else dictionary.Remove(Key);
-                }
+                if (Existed) TargetDictionary[Key] = Original;
+                else TargetDictionary.Remove(Key);
                 if (LocaleState != null) LocaleState.AppliedTargets--;
                 applied = false;
             }
@@ -500,7 +560,7 @@ namespace ProbablyEdited
         {
             public readonly TextEntry Entry;
             public LoadedMod Mod => ModTarget?.Mod;
-            public readonly ModTarget ModTarget;
+            public ModTarget ModTarget { get; set; }
             private readonly StringTable table;
             private readonly long keyId;
             private readonly string original;

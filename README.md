@@ -21,11 +21,13 @@
 
 ### 从Releases下载
 
-1. 下载[本模组](https://github.com/Octobersama/ProbablyEdited/releases)和可选依赖项:[ProbablyFonts](https://github.com/Octobersama/ProbablyFonts/releases)（推荐）的最新releases，解压后将两个模组文件夹放进 `Steam\steamapps\common\Probably Stolen\Mods`。
-2. 在游戏模组列表中依次启用 **ProbablyFonts** 和 **可能是改的 / Probably Edited**，然后重启游戏。
+1. 下载[本模组](https://github.com/Octobersama/ProbablyEdited/releases)的最新 Release，解压后将模组文件夹放进 `Steam\steamapps\common\Probably Stolen\Mods`。
+2. 在游戏模组列表中启用 **可能是改的 / Probably Edited**，然后重启游戏。
 3. 回到主菜单的模组列表，选中 **可能是改的 / Probably Edited**，点击设置齿轮即可打开编辑器。
 
 若需要在游戏内打开编辑器，推荐使用 [游戏内模组设置 / In-Game Mod Settings](https://steamcommunity.com/sharedfiles/filedetails/?id=3834556946)。
+
+[ProbablyFonts](https://github.com/Octobersama/ProbablyFonts/releases) 是推荐的可选字体补丁，不安装也能使用编辑器；模组列表中的缺少先决模组提示不影响使用。编辑器本身不修改字体；如果游戏语言设为英语等非 CJK 语言，中文、日文等文字可能缺字或显示异常，需要时再安装并启用 ProbablyFonts。
 
 ## 编辑与分享
 
@@ -36,7 +38,7 @@
 3. 点击 **暂存此条**，再继续修改其他条目。暂存只是先记住这次修改，还没有写入文件。
 4. 修改完成后点击 **保存并应用**：保存所有预设的草稿，只会让当前选中的预设生效。
 
-切换预设或文本语言只是在切换编辑对象，不会马上替换游戏文字，也不会改变游戏语言。输入框右键可以全选、复制、粘贴、撤销和重做。
+切换预设或文本语言只是在切换编辑对象，不会马上替换游戏文字，也不会改变游戏语言；更改游戏语言也不会自动切换当前编辑对象。输入框右键可以全选、复制、粘贴、撤销和重做。
 
 想换编辑器自身的显示语言，请到游戏 **选项 → Probably Edited · 界面 → 模组界面语言** 中设置；默认跟随游戏。
 

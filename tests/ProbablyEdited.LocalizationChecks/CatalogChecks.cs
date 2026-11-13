@@ -25,6 +25,11 @@ internal static class CatalogChecks
             Program.Run("disposing the catalog restores a shared alias baseline", DisposeRestoresSharedBaseline, ref failures);
             Program.Run("missing keys and newly created locale dictionaries are cleaned up", RestoresMissingKeysAndCreatedLocales, ref failures);
             Program.Run("reloading a created locale preserves its English baselines and overrides", ReloadsCreatedLocaleWithoutLosingBaseline, ref failures);
+            Program.Run("later-loaded aliases reuse a created locale's original baseline", CreatedLocaleAliasesUseTheOwnedDictionaryBaseline, ref failures);
+            Program.Run("replacement dictionaries survive direct apply and dispose", ReplacingCreatedLocalePreservesExternalDictionary, ref failures);
+            Program.Run("a dictionary registered before first apply restores its original key", ExternalLocaleRegisteredBeforeFirstApplyRestoresOriginalValue, ref failures);
+            Program.Run("late aliases are preflighted before any game or mod writes", LateAliasesArePreflightedBeforeWrites, ref failures);
+            Program.Run("reloading a replaced locale restores both dictionary baselines", ReloadingReplacedCreatedLocaleRestoresBothDictionaries, ref failures);
             Program.Run("disposing after a created-locale reload removes only that locale", DisposeAfterReloadingCreatedLocale, ref failures);
             Program.Run("independent locale dictionaries remain independent", KeepsIndependentLocalesSeparate, ref failures);
             Program.Run("identical alias overrides are accepted and counted per text id", AllowsEqualAliasOverrides, ref failures);
@@ -149,6 +154,200 @@ internal static class CatalogChecks
             Program.Equal("Second farewell", fixture.Mod.Localization["it"]["farewell"]);
             Program.Equal(0, fixture.Catalog.Apply(EmptyOverrides()));
             Program.Equal(false, fixture.Mod.Localization.ContainsKey("it"));
+        }
+    }
+
+    private static void CreatedLocaleAliasesUseTheOwnedDictionaryBaseline()
+    {
+        using (Fixture fixture = CreateFixture(Localization(("en-US", GreetingKey, "English greeting"))))
+        {
+            Load(fixture.Catalog, "it");
+            TextEntry italian = FindEntry(fixture.Catalog, "it", GreetingKey);
+            fixture.Catalog.Apply(Overrides((italian.Id, "Temporary greeting")));
+            Dictionary<string, string> createdDictionary = fixture.Mod.Localization["it"];
+            fixture.Mod.Localization["it-alias"] = createdDictionary;
+
+            Load(fixture.Catalog, "en");
+            Load(fixture.Catalog, "it-alias");
+            TextEntry game = FindGameEntry(fixture.Catalog, "en");
+            TextEntry alias = FindEntry(fixture.Catalog, "it-alias", GreetingKey);
+            Program.Equal("it-alias", alias.Id.Locale);
+            Program.Equal("English greeting", alias.OriginalText);
+
+            InvalidOperationException conflict = null;
+            try
+            {
+                fixture.Catalog.Apply(Overrides(
+                    (italian.Id, "Conflicting native value"),
+                    (alias.Id, "Conflicting alias value"),
+                    (game.Id, "Must not be written")));
+            }
+            catch (InvalidOperationException error)
+            {
+                conflict = error;
+            }
+
+            Program.Equal("Conflicting aliases for greeting.", conflict?.Message);
+            Program.Equal("Temporary greeting", createdDictionary[GreetingKey]);
+            Program.Equal("Game baseline", fixture.GameTable.GetEntry(1).Value);
+            Program.Equal(2, fixture.Catalog.Apply(Overrides(
+                (italian.Id, "Shared replacement"),
+                (alias.Id, "Shared replacement"))));
+            Program.Equal("Shared replacement", createdDictionary[GreetingKey]);
+        }
+    }
+
+    private static void ReplacingCreatedLocalePreservesExternalDictionary()
+    {
+        using (Fixture fixture = CreateFixture(Localization(("en-US", GreetingKey, "English greeting"))))
+        {
+            Load(fixture.Catalog, "it");
+            TextEntry greeting = FindEntry(fixture.Catalog, "it", GreetingKey);
+            fixture.Catalog.Apply(Overrides((greeting.Id, "Temporary greeting")));
+            Dictionary<string, string> createdDictionary = fixture.Mod.Localization["it"];
+            var replacement = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [GreetingKey] = "External original"
+            };
+            fixture.Mod.Localization["it"] = replacement;
+
+            fixture.Catalog.Apply(EmptyOverrides());
+
+            Program.Equal(false, createdDictionary.ContainsKey(GreetingKey));
+            Program.Equal("External original", replacement.TryGetValue(GreetingKey, out string value) ? value : null);
+            Program.Equal(true, fixture.Mod.Localization.TryGetValue("it", out var mapped)
+                && ReferenceEquals(replacement, mapped));
+        }
+
+        using (Fixture fixture = CreateFixture(Localization(("en-US", GreetingKey, "English greeting"))))
+        {
+            Load(fixture.Catalog, "it");
+            TextEntry greeting = FindEntry(fixture.Catalog, "it", GreetingKey);
+            fixture.Catalog.Apply(Overrides((greeting.Id, "Temporary greeting")));
+            Dictionary<string, string> createdDictionary = fixture.Mod.Localization["it"];
+            var replacement = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [GreetingKey] = "External original"
+            };
+            fixture.Mod.Localization["it"] = replacement;
+
+            fixture.Catalog.Dispose();
+
+            Program.Equal(false, createdDictionary.ContainsKey(GreetingKey));
+            Program.Equal("External original", replacement.TryGetValue(GreetingKey, out string value) ? value : null);
+            Program.Equal(true, fixture.Mod.Localization.TryGetValue("it", out var mapped)
+                && ReferenceEquals(replacement, mapped));
+        }
+    }
+
+    private static void ExternalLocaleRegisteredBeforeFirstApplyRestoresOriginalValue()
+    {
+        using (Fixture fixture = CreateFixture(Localization(("en-US", GreetingKey, "English greeting"))))
+        {
+            Load(fixture.Catalog, "it");
+            TextEntry greeting = FindEntry(fixture.Catalog, "it", GreetingKey);
+            var external = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [GreetingKey] = "External original"
+            };
+            fixture.Mod.Localization["it"] = external;
+
+            fixture.Catalog.Apply(Overrides((greeting.Id, "Temporary greeting")));
+            Program.Equal("Temporary greeting", external[GreetingKey]);
+            fixture.Catalog.Apply(EmptyOverrides());
+
+            Program.Equal("External original", external[GreetingKey]);
+            Program.Equal(true, fixture.Mod.Localization.TryGetValue("it", out var mapped)
+                && ReferenceEquals(external, mapped));
+        }
+    }
+
+    private static void LateAliasesArePreflightedBeforeWrites()
+    {
+        using (Fixture fixture = CreateFixture(Localization(("en-US", GreetingKey, "English greeting"))))
+        {
+            Load(fixture.Catalog, "it");
+            TextEntry italian = FindEntry(fixture.Catalog, "it", GreetingKey);
+            var external = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [GreetingKey] = "External original"
+            };
+            fixture.Mod.Localization["it"] = external;
+            fixture.Mod.Localization["it-alias"] = external;
+            Load(fixture.Catalog, "it-alias");
+            Load(fixture.Catalog, "en");
+            TextEntry alias = FindEntry(fixture.Catalog, "it-alias", GreetingKey);
+            TextEntry game = FindGameEntry(fixture.Catalog, "en");
+
+            InvalidOperationException conflict = null;
+            try
+            {
+                fixture.Catalog.Apply(Overrides(
+                    (italian.Id, "Conflicting native value"),
+                    (alias.Id, "Conflicting alias value"),
+                    (game.Id, "Must not be written")));
+            }
+            catch (InvalidOperationException error)
+            {
+                conflict = error;
+            }
+
+            Program.Equal("Conflicting aliases for greeting.", conflict?.Message);
+            Program.Equal("External original", external[GreetingKey]);
+            Program.Equal("Game baseline", fixture.GameTable.GetEntry(1).Value);
+            Program.Equal(2, fixture.Catalog.Apply(Overrides(
+                (italian.Id, "Shared replacement"),
+                (alias.Id, "Shared replacement"))));
+            Program.Equal("Shared replacement", external[GreetingKey]);
+            fixture.Catalog.Apply(EmptyOverrides());
+            Program.Equal("External original", external[GreetingKey]);
+        }
+    }
+
+    private static void ReloadingReplacedCreatedLocaleRestoresBothDictionaries()
+    {
+        using (Fixture fixture = CreateFixture(Localization(("en-US", GreetingKey, "English greeting"))))
+        {
+            Load(fixture.Catalog, "it");
+            TextEntry greeting = FindEntry(fixture.Catalog, "it", GreetingKey);
+            fixture.Catalog.Apply(Overrides((greeting.Id, "First temporary greeting")));
+            Dictionary<string, string> createdDictionary = fixture.Mod.Localization["it"];
+            var replacement = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [GreetingKey] = "External original"
+            };
+            fixture.Mod.Localization["it"] = replacement;
+            Load(fixture.Catalog, "it");
+            greeting = FindEntry(fixture.Catalog, "it", GreetingKey);
+
+            fixture.Catalog.Apply(Overrides((greeting.Id, "Second temporary greeting")));
+            fixture.Catalog.Apply(EmptyOverrides());
+
+            Program.Equal(false, createdDictionary.ContainsKey(GreetingKey));
+            Program.Equal("External original", replacement[GreetingKey]);
+            Program.Equal(true, ReferenceEquals(replacement, fixture.Mod.Localization["it"]));
+        }
+
+        using (Fixture fixture = CreateFixture(Localization(("en-US", GreetingKey, "English greeting"))))
+        {
+            Load(fixture.Catalog, "it");
+            TextEntry greeting = FindEntry(fixture.Catalog, "it", GreetingKey);
+            fixture.Catalog.Apply(Overrides((greeting.Id, "First temporary greeting")));
+            Dictionary<string, string> createdDictionary = fixture.Mod.Localization["it"];
+            var replacement = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [GreetingKey] = "External original"
+            };
+            fixture.Mod.Localization["it"] = replacement;
+            Load(fixture.Catalog, "it");
+            greeting = FindEntry(fixture.Catalog, "it", GreetingKey);
+
+            fixture.Catalog.Apply(Overrides((greeting.Id, "Second temporary greeting")));
+            fixture.Catalog.Dispose();
+
+            Program.Equal(false, createdDictionary.ContainsKey(GreetingKey));
+            Program.Equal("External original", replacement[GreetingKey]);
+            Program.Equal(true, ReferenceEquals(replacement, fixture.Mod.Localization["it"]));
         }
     }
 

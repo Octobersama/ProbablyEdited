@@ -361,7 +361,6 @@ namespace ProbablyEdited
             builder.End();
 
             _window = builder.Show();
-            NativeFontSupport.Apply(_window);
             if (_originalInput?.input?.textComponent != null && _replacementInput?.input?.textComponent != null)
             {
                 _diffHighlighter?.Dispose();
@@ -430,7 +429,6 @@ namespace ProbablyEdited
             ConfigureMultiline(builder.Last, 630f, 290f, true);
             builder.AddButton(UiText.Get("editor.action.close_information"), () => _coverageWindow?.Close(), "close_information");
             _coverageWindow = builder.Show();
-            NativeFontSupport.Apply(_coverageWindow);
         }
 
         private static CustomUIElement AddDetailLabel(CustomUIBuilder builder, string text)
@@ -490,7 +488,6 @@ namespace ProbablyEdited
 
             element.SetString(value ?? string.Empty, false);
             ResetInputToStart(element);
-            NativeFontSupport.Apply(element);
             TextInputContextMenu.ResetHistory(element, element.input);
         }
 
@@ -690,7 +687,6 @@ namespace ProbablyEdited
 
             _localeDropdown.SetOptions(BuildLocaleCaptions());
             _localeDropdown.SetIndex(GetSelectedLocaleIndex(), false);
-            NativeFontSupport.Apply(_localeDropdown);
             _localeDropdown.SetInteractable(!_controller.IsLoading && _localeCodes.Count > 1);
         }
 
@@ -1152,7 +1148,6 @@ namespace ProbablyEdited
                         _emptyResultsLabel.text.alignment = TextAlignmentOptions.MidlineLeft;
                         _emptyResultsLabel.text.enableWordWrapping = false;
                     }
-                    NativeFontSupport.Apply(_emptyResultsLabel);
                 }
 
                 _emptyResultsLabel.root.SetActive(true);
@@ -1365,7 +1360,6 @@ namespace ProbablyEdited
             if (row.text == null || !string.Equals(row.text.text, text, StringComparison.Ordinal))
             {
                 row.SetText(text);
-                NativeFontSupport.Apply(row);
             }
 
             if (row.text != null)
@@ -1509,7 +1503,6 @@ namespace ProbablyEdited
             ResetInputToStart(_replacementInput);
             if (_replacementInput != null)
             {
-                NativeFontSupport.Apply(_replacementInput);
                 TextInputContextMenu.ResetHistory(_replacementInput,
                     _selectedEntry == null ? null : (object)(_controller.SelectedPresetId, _selectedEntry.Id));
             }
@@ -1520,10 +1513,6 @@ namespace ProbablyEdited
         private void UpdateReplacementDraft(string value)
         {
             _replacementDraft = value ?? string.Empty;
-            if (_replacementInput != null)
-            {
-                NativeFontSupport.Apply(_replacementInput);
-            }
             RefreshDiff();
             UpdateDraftLabel();
             UpdateDetailButtons();
@@ -1799,7 +1788,6 @@ namespace ProbablyEdited
             builder.AddButton(UiText.Get("editor.validation.confirm"), ApproveValidation, "validation_accept");
             builder.End();
             _validationWindow = builder.Show();
-            NativeFontSupport.Apply(_validationWindow);
         }
 
         private void ApproveValidation()
@@ -2004,7 +1992,6 @@ namespace ProbablyEdited
             }, "error_close");
             builder.End();
             _errorWindow = builder.Show();
-            NativeFontSupport.Apply(_errorWindow);
         }
 
         private static string JoinLines(IReadOnlyList<string> values)
@@ -2089,7 +2076,6 @@ namespace ProbablyEdited
             builder.AddButton(UiText.Get("editor.import.close"), () => _importWindow?.Close(), "close_import");
 
             _importWindow = builder.Show();
-            NativeFontSupport.Apply(_importWindow);
             UpdateImportWindow();
         }
 
@@ -2314,7 +2300,6 @@ namespace ProbablyEdited
             builder.AddButton(UiText.Get("editor.export.close"), () => _exportWindow?.Close(), "close_export");
             builder.End();
             _exportWindow = builder.Show();
-            NativeFontSupport.Apply(_exportWindow);
             RefreshExportPresetOptions();
         }
 

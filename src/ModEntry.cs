@@ -43,7 +43,6 @@ namespace ProbablyEdited
             ModHook.OnModAssetsLoaded -= OnAssetsReady;
             editor?.Close();
             controller?.Dispose();
-            NativeFontSupport.Release();
             uiLocalization?.Dispose();
             Current = null;
         }
