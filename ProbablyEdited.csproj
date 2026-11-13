@@ -6,7 +6,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>ProbablyEdited</AssemblyName>
     <RootNamespace>ProbablyEdited</RootNamespace>
-    <Version>0.3.0</Version>
+    <Version>1.0.0</Version>
     <Authors>OctoberSama</Authors>
     <Copyright>Copyright 2026 OctoberSama</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
