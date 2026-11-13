@@ -1,0 +1,82 @@
+name: Editor console checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  console-checks:
+    name: Run Editor checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize test results
+        shell: bash
+        run: |
+          mkdir -p test-results
+          cat > test-results/summary.txt <<'EOF'
+          ProbablyEdited console check results
+          These are text logs/results only; no mod packages, game DLLs, or test binaries are included.
+          No checks ran; the workflow has not reached test execution yet.
+          EOF
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run console check projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'ProbablyEdited console check results\nThese are text logs/results only; no mod packages, game DLLs, or test binaries are included.\n\n' > test-results/summary.txt
+          failures=0
+
+          run_check() {
+            local name="$1"
+            local project="$2"
+            local log="test-results/${name}.log"
+            local status
+
+            printf 'Running %s (%s)\n' "$name" "$project"
+            if dotnet run --project "$project" --configuration Release >"$log" 2>&1; then
+              status=0
+            else
+              status=$?
+              failures=1
+            fi
+            cat "$log"
+
+            if (( status == 0 )); then
+              printf 'PASS %s (exit 0; log: %s)\n' "$name" "$log" >> test-results/summary.txt
+            else
+              printf 'FAIL %s (exit %s; log: %s)\n' "$name" "$status" "$log" >> test-results/summary.txt
+            fi
+          }
+
+          run_check CoreChecks tests/ProbablyEdited.CoreChecks/ProbablyEdited.CoreChecks.csproj
+          run_check ControllerChecks tests/ProbablyEdited.ControllerChecks/ProbablyEdited.ControllerChecks.csproj
+          run_check PresetChecks tests/ProbablyEdited.PresetChecks/ProbablyEdited.PresetChecks.csproj
+          run_check DiffChecks tests/ProbablyEdited.DiffChecks/ProbablyEdited.DiffChecks.csproj
+          run_check LocalizationChecks tests/ProbablyEdited.LocalizationChecks/ProbablyEdited.LocalizationChecks.csproj
+
+          cat test-results/summary.txt
+          exit "$failures"
+
+      - name: Upload console check logs and results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ProbablyEdited-console-check-results
+          path: |
+            test-results/*.log
+            test-results/summary.txt
+          if-no-files-found: error
