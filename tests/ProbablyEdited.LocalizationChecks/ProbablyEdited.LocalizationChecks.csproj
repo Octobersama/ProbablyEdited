@@ -8,5 +8,7 @@
   <ItemGroup>
     <Compile Include="../../src/Core/UiText.cs" Link="Core/UiText.cs" />
     <Compile Include="../../src/Core/UiLocaleCatalog.cs" Link="Core/UiLocaleCatalog.cs" />
+    <Compile Include="../../src/Core/ModLocalizationAliases.cs" Link="Core/ModLocalizationAliases.cs" />
+    <Compile Include="../Shared/TestLocalization.cs" Link="TestLocalization.cs" />
   </ItemGroup>
 </Project>

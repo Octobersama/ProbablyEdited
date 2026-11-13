@@ -9,7 +9,7 @@ internal static class TestLocalization
 {
     public static void Initialize()
     {
-        Dictionary<string, string> english = ReadCsv(Path.Combine(AppContext.BaseDirectory, "Localization", "en.csv"));
+        Dictionary<string, string> english = ReadCsv(Path.Combine(AppContext.BaseDirectory, "Localization", "en-US.csv"));
         UiText.Configure(key => english.TryGetValue(key, out string value) ? value : key, CultureInfo.GetCultureInfo("en"));
     }
 

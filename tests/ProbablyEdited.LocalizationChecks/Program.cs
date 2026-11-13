@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using ProbablyEdited;
 
 internal static class Program
@@ -13,8 +14,11 @@ internal static class Program
         Run("game locale aliases resolve to their existing mod dictionaries", ResolvesAliases, ref failures);
         Run("UI languages are limited to native choices plus Taiwan Traditional", LimitsLanguagesToNativePickerAndTaiwan, ref failures);
         Run("live official-dictionary overrides and restoration are visible", ObservesLiveOverrides, ref failures);
+        Run("shipped locale assets use standard language-region filenames", ShippedFilesUseStandardLocaleNames, ref failures);
+        Run("regional assets share native dictionaries through lookup, mutation, and restore", RegionalAssetsShareNativeDictionaries, ref failures);
+        Run("native UI-language enumeration stays limited to the game picker", NativeLanguageEnumerationUsesPickerChoices, ref failures);
         Run("UI formatting uses its own culture without changing process culture", KeepsFormattingIndependent, ref failures);
-        Console.WriteLine(failures == 0 ? "All 6 localization checks passed." : failures + " localization check(s) failed.");
+        Console.WriteLine(failures == 0 ? "All 9 localization checks passed." : failures + " localization check(s) failed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -46,6 +50,24 @@ internal static class Program
     private static UiLocaleCatalog Catalog(Dictionary<string, Dictionary<string, string>> tables = null)
     {
         return new UiLocaleCatalog(tables ?? Tables(), NativePickerLanguages());
+    }
+
+    private static Dictionary<string, Dictionary<string, string>> LoadShippedTables()
+    {
+        string directory = LocalizationDirectory();
+        var tables = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        foreach (string path in Directory.GetFiles(directory, "*.csv"))
+            tables.Add(Path.GetFileNameWithoutExtension(path), TestLocalization.ReadCsv(path));
+        return tables;
+    }
+
+    private static string LocalizationDirectory()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "ProbablyEdited.csproj")))
+            directory = directory.Parent;
+        if (directory == null) throw new DirectoryNotFoundException("Could not locate the ProbablyEdited project root.");
+        return Path.Combine(directory.FullName, "Localization");
     }
 
     private static void FollowsGameOnlyWhenRequested()
@@ -109,6 +131,71 @@ internal static class Program
         Equal("臺灣內容", catalog.Get("zh-TW", "label"));
         tables["zh-TW"].Remove("label");
         Equal("English value", catalog.Get("zh-TW", "label"));
+    }
+
+    private static void ShippedFilesUseStandardLocaleNames()
+    {
+        string[] expected =
+        {
+            "de-DE.csv", "en-US.csv", "es-ES.csv", "fr-FR.csv", "ja-JP.csv",
+            "pl-PL.csv", "ru-RU.csv", "zh-CN.csv", "zh-TW.csv"
+        };
+        string[] paths = Directory.GetFiles(LocalizationDirectory(), "*.csv");
+        var actual = new string[paths.Length];
+        for (int index = 0; index < paths.Length; index++)
+            actual[index] = Path.GetFileName(paths[index]);
+        Array.Sort(actual, StringComparer.Ordinal);
+
+        Equal(expected.Length, actual.Length);
+        for (int index = 0; index < expected.Length; index++)
+            Equal(expected[index], actual[index]);
+    }
+
+    private static void RegionalAssetsShareNativeDictionaries()
+    {
+        var tables = LoadShippedTables();
+        (string Resource, string Native)[] aliases =
+        {
+            ("en-US", "en"), ("zh-CN", "zh"), ("de-DE", "de"), ("es-ES", "es"),
+            ("fr-FR", "fr"), ("ja-JP", "ja"), ("pl-PL", "pl"), ("ru-RU", "ru")
+        };
+        foreach (var alias in aliases)
+            tables[alias.Native] = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["meta.native_name"] = "Stale legacy translation"
+            };
+
+        ModLocalizationAliases.Register(tables);
+        var catalog = new UiLocaleCatalog(tables, NativePickerLanguages());
+        foreach (var alias in aliases)
+        {
+            Equal(true, ReferenceEquals(tables[alias.Resource], tables[alias.Native]));
+            Equal(tables[alias.Resource]["meta.native_name"], catalog.Get(alias.Native, "meta.native_name"));
+        }
+
+        const string key = "options.follow_game";
+        string original = tables["en-US"][key];
+        Equal("Follow game language", catalog.Get("en", key));
+        tables["en"][key] = "Temporary override";
+        Equal("Temporary override", tables["en-US"][key]);
+        Equal("Temporary override", catalog.Get("en", key));
+        tables["en-US"][key] = original;
+        Equal(original, catalog.Get("en", key));
+
+        ModLocalizationAliases.Register(tables);
+        Equal(true, ReferenceEquals(tables["en-US"], tables["en"]));
+        Equal(original, catalog.Get("en", key));
+    }
+
+    private static void NativeLanguageEnumerationUsesPickerChoices()
+    {
+        var tables = LoadShippedTables();
+        ModLocalizationAliases.Register(tables);
+        var languages = new UiLocaleCatalog(tables, NativePickerLanguages()).GetLanguages();
+        string[] expectedCodes = { "zh", "zh-TW", "en", "de", "es", "fr", "ja", "pl", "ru" };
+        Equal(expectedCodes.Length, languages.Count);
+        for (int index = 0; index < expectedCodes.Length; index++)
+            Equal(expectedCodes[index], languages[index].Code);
     }
 
     private static void KeepsFormattingIndependent()

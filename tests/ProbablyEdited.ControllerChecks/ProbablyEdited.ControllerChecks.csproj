@@ -9,7 +9,7 @@
     <Compile Include="../../src/Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <Compile Include="../../src/EditorController.cs" Link="Production/EditorController.cs" />
     <Compile Include="../Shared/TestLocalization.cs" Link="TestLocalization.cs" />
-    <None Include="../../Localization/en.csv" Link="Localization/en.csv" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../Localization/en-US.csv" Link="Localization/en-US.csv" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 </Project>

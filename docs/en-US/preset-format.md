@@ -39,6 +39,8 @@ Each item in `overrides` has exactly these required fields:
 
 All four identity strings (`sourceId`, `locale`, `tableId`, `key`) must contain at least one non-whitespace character. Identity matching is exact and case-sensitive across the whole tuple `(sourceId, locale, tableId, key)`. Values are not trimmed or case-folded. A repeated tuple in one file is a duplicate override and is rejected.
 
+ProbablyEdited's own translations use regional resource filenames such as `en-US.csv` and `zh-CN.csv`. After loading, the official dictionary also exposes the game's native keys (`en`, `zh`, and so on) as aliases of the same tables. Editing this mod through a native game language therefore keeps the existing `locale` identity in presets. Do not change an existing JSON locale merely because the CSV filename changed.
+
 The exporter emits standard JSON. The importer reads with Json.NET and explicitly requires an object root, rejects comment tokens, duplicate JSON property names, and content after the first JSON value, then checks the field names and types described above. Json.NET accepts some syntax extensions, so this is not a strict validator for every lexical rule of the JSON standard. An empty `overrides` array is valid; the parser defines no fixed upper bound for override count, JSON size, or string length.
 
 ## Smallest valid version 2 file

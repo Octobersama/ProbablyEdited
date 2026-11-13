@@ -33,6 +33,10 @@ namespace ProbablyEdited
 
         public void Attach(LoadedMod mod)
         {
+            ModLocalizationAliases.Register(mod.Localization);
+            nativeLanguageCodes.Clear();
+            nativeLanguagesLoaded = false;
+            optionCodes.Clear();
             catalog = new UiLocaleCatalog(mod.Localization, Array.Empty<string>());
             ActivateForEditor();
         }
