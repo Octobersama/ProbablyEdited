@@ -6,3 +6,5 @@ dist/
 *.suo
 /.playwright-mcp/
 /参考/
+__pycache__/
+*.py[cod]

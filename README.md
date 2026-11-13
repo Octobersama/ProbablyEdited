@@ -82,6 +82,8 @@ dotnet build ProbablyEdited.csproj -c Release
 dotnet build ProbablyEdited.csproj -c Release -p:GameDirectory="D:\SteamLibrary\steamapps\common\Probably Stolen"
 ```
 
+维护者发布新版本时，可按[自动发布指南](docs/releasing.md)运行脚本：更改日志手写，版本同步、构建、ZIP 打包和逐文件 SHA-512／MD5 表自动生成。
+
 ## 覆盖范围与兼容性
 
 - 编辑器枚举游戏原生本地化表，以及已启用模组通过官方系统加载的 `Localization` 字典。代码中写死的文字、自建文本系统和动态生成内容不一定能通用枚举。

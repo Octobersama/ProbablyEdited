@@ -67,6 +67,29 @@ jobs:
           run_check PresetChecks tests/ProbablyEdited.PresetChecks/ProbablyEdited.PresetChecks.csproj
           run_check DiffChecks tests/ProbablyEdited.DiffChecks/ProbablyEdited.DiffChecks.csproj
           run_check LocalizationChecks tests/ProbablyEdited.LocalizationChecks/ProbablyEdited.LocalizationChecks.csproj
+          run_python_check() {
+            local name="ReleaseTooling"
+            local log="test-results/${name}.log"
+            local status
+
+            printf 'Running %s (Python unittest)\n' "$name"
+            if python3 -m unittest discover -s tests -p 'test_release.py' -v >"$log" 2>&1; then
+              status=0
+            else
+              status=$?
+              failures=1
+            fi
+            cat "$log"
+
+            if (( status == 0 )); then
+              printf 'PASS %s (exit 0; log: %s)\n' "$name" "$log" >> test-results/summary.txt
+            else
+              printf 'FAIL %s (exit %s; log: %s)\n' "$name" "$status" "$log" >> test-results/summary.txt
+            fi
+          }
+
+          run_python_check
+
 
           cat test-results/summary.txt
           exit "$failures"
